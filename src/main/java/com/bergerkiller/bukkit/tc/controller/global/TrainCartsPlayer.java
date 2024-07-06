@@ -2,6 +2,7 @@ package com.bergerkiller.bukkit.tc.controller.global;
 
 import com.bergerkiller.bukkit.common.config.ConfigurationNode;
 import com.bergerkiller.bukkit.common.utils.LogicUtil;
+import com.bergerkiller.bukkit.tc.TCConfig;
 import com.bergerkiller.bukkit.tc.TrainCarts;
 import com.bergerkiller.bukkit.tc.attachments.config.SavedAttachmentModel;
 import com.bergerkiller.bukkit.tc.attachments.ui.AttachmentEditor;
@@ -28,6 +29,7 @@ public class TrainCartsPlayer implements TrainCarts.Provider {
     private WeakReference<CartProperties> editedCart;
     private String editedModelName;
     private ConfigurationNode modelClipboard;
+    private boolean modelSearchCompactFolders = TCConfig.modelSearchCompactFolders;
 
     TrainCartsPlayer(TrainCarts traincarts, Player player) {
         this(traincarts, player.getUniqueId());
@@ -65,7 +67,7 @@ public class TrainCartsPlayer implements TrainCarts.Provider {
      */
     public Player getOnlinePlayer() {
         Player p = player.get();
-        if (p == null || !p.isOnline()) {
+        if (p == null || !p.isValid()) {
             p = Bukkit.getPlayer(uuid);
             if (p != null) {
                 player = new WeakReference<>(p);
@@ -117,7 +119,7 @@ public class TrainCartsPlayer implements TrainCarts.Provider {
             return null;
         } else {
             try {
-                return traincarts.getSavedAttachmentModels().setDefaultConfigIfMissing(editedModelName);
+                return traincarts.getSavedAttachmentModels().setDefaultConfigIfMissing(editedModelName, getOnlinePlayer());
             } catch (IllegalNameException e) {
                 editedModelName = null;
                 traincarts.getLogger().log(Level.SEVERE, "Unexpected illegal name exception", e);
@@ -220,5 +222,13 @@ public class TrainCartsPlayer implements TrainCarts.Provider {
      */
     public void setModelClipboard(ConfigurationNode attachmentConfig) {
         this.modelClipboard = (attachmentConfig == null) ? null : attachmentConfig.clone();
+    }
+
+    public boolean getModelSearchCompactFolders() {
+        return modelSearchCompactFolders;
+    }
+
+    public void setModelSearchCompactFolders(boolean compact) {
+        modelSearchCompactFolders = compact;
     }
 }

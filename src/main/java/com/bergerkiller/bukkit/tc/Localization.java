@@ -5,13 +5,12 @@ import com.bergerkiller.bukkit.common.localization.LocalizationEnum;
 import com.bergerkiller.bukkit.tc.controller.MinecartGroup;
 import com.bergerkiller.bukkit.tc.controller.MinecartMember;
 
-import cloud.commandframework.captions.Caption;
-
 import java.util.HashSet;
 
 import com.bergerkiller.bukkit.tc.controller.global.TrainCartsPlayer;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
+import org.incendo.cloud.caption.Caption;
 
 public class Localization extends LocalizationEnum {
     public static final Localization COMMAND_USAGE = new Localization("command.usage", ChatColor.GREEN + "See " + "[" + ChatColor.WHITE + ChatColor.UNDERLINE + "the WIKI](https://wiki.traincarts.net/p/TrainCarts)" + ChatColor.RESET + ChatColor.GREEN + " for more information, or use /train help");
@@ -65,6 +64,7 @@ public class Localization extends LocalizationEnum {
     public static final Localization COMMAND_INPUT_SPEED_INVALID = new Localization("command.input.speed.invalid", ChatColor.RED + "Input value %0% is not a valid number or speed expression");
     public static final Localization COMMAND_INPUT_ACCELERATION_INVALID = new Localization("command.input.acceleration.invalid", ChatColor.RED + "Input value %0% is not a valid number or acceleration expression");
     public static final Localization COMMAND_INPUT_DIRECTION_INVALID = new Localization("command.input.direction.invalid", ChatColor.RED + "Input value %0% is not a valid direction");
+    public static final Localization COMMAND_INPUT_CHUNK_LOADING_MODE_INVALID = new Localization("command.input.chunkloading.mode.invalid", ChatColor.RED + "Input value %0% is not a valid chunk loading mode");
     public static final Localization COMMAND_INPUT_NAME_EMPTY = new Localization("command.input.name.empty", ChatColor.RED + "Input train name is empty!");
     public static final Localization COMMAND_INPUT_NAME_INVALID = new Localization("command.input.name.invalid", ChatColor.RED + "Input train name '%0%' contains invalid characters!");
     public static final Localization COMMAND_INPUT_ATTACHMENTS_NO_SEATS = new Localization("command.input.attachments.noseats", ChatColor.RED + "No seats with name '%0%' found!");
@@ -91,6 +91,7 @@ public class Localization extends LocalizationEnum {
     public static final Localization SPAWN_DISALLOWED_INVENTORY = new Localization("spawn.inventoryitems.notallowed", ChatColor.RED + "You do not have permission to create minecarts with pre-existing inventory items");
     public static final Localization SPAWN_FORBIDDEN_CONTENTS = new Localization("spawn.forbiddencontents", ChatColor.RED + "The train configuration cannot be spawned because the train contains things you have no permission to use or spawn");
     public static final Localization SPAWN_MAX_PER_WORLD = new Localization("spawn.maxperworld", ChatColor.RED + "Cannot spawn because the maximum number of Minecarts on this world has been reached!");
+    public static final Localization SPAWN_TOO_LONG = new Localization("spawn.toolong", ChatColor.RED + "Cannot spawn because the spawned train is too long! (Too many Minecarts)");
 
     public static final Localization SELECT_DESTINATION = new Localization("select.destination", ChatColor.YELLOW + "You have selected " + ChatColor.WHITE + "%0%" + ChatColor.YELLOW + " as your destination!");
     public static final Localization TICKET_EXPIRED = new Localization("ticket.expired", ChatColor.RED + "Your ticket for %0% is expired");

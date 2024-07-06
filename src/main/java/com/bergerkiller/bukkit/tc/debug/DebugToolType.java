@@ -1,12 +1,12 @@
 package com.bergerkiller.bukkit.tc.debug;
 
+import com.bergerkiller.bukkit.common.inventory.CommonItemStack;
+import com.bergerkiller.bukkit.common.nbt.CommonTagCompound;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
-import org.bukkit.inventory.ItemStack;
 
-import com.bergerkiller.bukkit.common.utils.ItemUtil;
 import com.bergerkiller.bukkit.tc.TrainCarts;
 
 /**
@@ -60,10 +60,10 @@ public interface DebugToolType {
      * @param trainCarts TrainCarts main plugin instance
      * @param player Player that interacted
      * @param clickedBlock Block that was interacted with
-     * @param item The debug tool item player is holding while interacting
+     * @param item The debug tool CommonItemStack item player is holding while interacting
      * @param isRightClick Whether this is a right-click (true) or left-click (false)
      */
-    void onBlockInteract(TrainCarts trainCarts, Player player, Block clickedBlock, ItemStack item, boolean isRightClick);
+    void onBlockInteract(TrainCarts trainCarts, Player player, Block clickedBlock, CommonItemStack item, boolean isRightClick);
 
     /**
      * Gives this debug tool type as an item to a player
@@ -71,23 +71,43 @@ public interface DebugToolType {
      * @param player
      */
     default void giveToPlayer(Player player) {
-        ItemStack item = ItemUtil.createItem(Material.STICK, 1);
-        ItemUtil.getMetaTag(item, true).putValue("TrainCartsDebug", this.getIdentifier());
-        ItemUtil.setDisplayName(item, this.getTitle());
-        ItemUtil.addLoreName(item, this.getDescription());
+        CommonItemStack item = CommonItemStack.create(Material.STICK, 1);
+        item.updateCustomData(tag -> {
+            tag.putValue("TrainCartsDebug", this.getIdentifier());
+            saveMetadata(tag);
+        });
+        item.setCustomNameMessage(this.getTitle());
+        item.addLoreMessage(this.getDescription());
 
         // Update item in main hand, if it is a debug item
-        if (DebugTool.updateToolItem(player, item)) {
+        if (DebugTool.updateToolItem(player, item.toBukkit())) {
             player.sendMessage(ChatColor.GREEN + "Debug tool updates to a " + this.getTitle());
             player.sendMessage(ChatColor.YELLOW + this.getDescription());
             return;
         }
 
         // Give new item
-        player.getInventory().addItem(item);
+        player.getInventory().addItem(item.toBukkit());
 
         // Display a message to the player to explain what it is
         player.sendMessage(ChatColor.GREEN + "Given a " + this.getTitle());
         player.sendMessage(ChatColor.YELLOW + this.getDescription());
+    }
+
+    /**
+     * Loads metadata stored in an item into this tool instance
+     *
+     * @param metadata Item Metadata (Read-only)
+     */
+    default void loadMetadata(CommonTagCompound metadata) {
+    }
+
+    /**
+     * Saves metadata stored in this tool into the metadata of an item
+     *
+     * @param metadata Item Metadata
+     * @see #giveToPlayer(Player)
+     */
+    default void saveMetadata(CommonTagCompound metadata) {
     }
 }

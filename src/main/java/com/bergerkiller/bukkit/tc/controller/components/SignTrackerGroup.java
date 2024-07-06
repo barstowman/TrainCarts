@@ -46,6 +46,11 @@ public class SignTrackerGroup extends SignTracker {
         sign.executeEventForGroup(active ? SignActionType.GROUP_ENTER : SignActionType.GROUP_LEAVE, owner);
     }
 
+    @Override
+    protected void onLoadedChange(ActiveSign sign, boolean loaded) {
+        sign.executeEventForGroup(loaded ? SignActionType.GROUP_RELOAD : SignActionType.GROUP_UNLOAD, owner);
+    }
+
     /**
      * Gets the Minecart Member part of this Group that is traveling on the
      * rails block specified.
@@ -72,19 +77,26 @@ public class SignTrackerGroup extends SignTracker {
         return owner.getRailTracker().getMemberFromRails(railsBlockPosition);
     }
 
-    @Override
-    public void clear() {
+    /**
+     * Clears all sign information of this group sign tracker
+     *
+     * @param clearMode Clearing mode, controls what type of events are sent to currently
+     *                  active signs.
+     */
+    public void clear(ClearMode clearMode) {
         for (MinecartMember<?> member : owner) {
-            member.getSignTracker().clear();
+            member.getSignTracker().clear(clearMode);
         }
-        super.clear();
-        detectorRegions.clear();
+        super.clear(clearMode);
+        detectorRegions.clear(); // Notified per member already
     }
 
     /**
      * Tells detector regions (and signs?) that the tracker owner has unloaded
+     *
+     * @param clearMode Type of sign clearing mode for {@link #clear(ClearMode)}
      */
-    public void unload() {
+    public void unload(ClearMode clearMode) {
         // Unload in detector regions
         if (!this.detectorRegions.isEmpty()) {
             for (DetectorRegion region : this.detectorRegions) {
@@ -94,7 +106,7 @@ public class SignTrackerGroup extends SignTracker {
         }
 
         // Send leave events to all signs
-        this.clear();
+        this.clear(clearMode);
 
         // Clear skip tracking data
         this.signSkipTracker.unloadSigns();
@@ -185,6 +197,14 @@ public class SignTrackerGroup extends SignTracker {
         }
     }
 
+    @Override
+    protected void clearOfflineActiveSignKeys() {
+        super.clearOfflineActiveSignKeys();
+        for (MinecartMember<?> member : owner) {
+            member.getSignTracker().clearOfflineActiveSignKeys();
+        }
+    }
+
     /**
      * Refreshes the block space and active signs if required
      */
@@ -193,6 +213,7 @@ public class SignTrackerGroup extends SignTracker {
         {
             // No need to update anything for empty trains
             if (owner.isEmpty()) {
+                clearOfflineActiveSignKeys();
                 clear();
                 return;
             }
@@ -223,7 +244,7 @@ public class SignTrackerGroup extends SignTracker {
 
                 // Filter based on cart skip options
                 for (MinecartMember<?> member : owner) {
-                    member.getSignTracker().signSkipTracker.filterSigns(member.getSignTracker().liveActiveSigns);
+                    member.getSignTracker().signSkipTrackerFilterSigns(member.getSignTracker().liveActiveSigns);
                 }
 
                 // Synchronize the list of active signs using the liveActiveSigns of the members
@@ -235,7 +256,7 @@ public class SignTrackerGroup extends SignTracker {
                 // Filter the list based on sign skip options before returning
                 // This will remove elements from the lists in the member sign tracker!
                 // That way, telling a train to skip signs will make it skip [cart] signs just the same
-                this.signSkipTracker.filterSigns(this.liveActiveSigns);
+                this.signSkipTrackerFilterSigns(this.liveActiveSigns);
 
                 // Update cart signs
                 // Activating a sign might cause a change to this train, make a defensive copy
@@ -343,6 +364,9 @@ public class SignTrackerGroup extends SignTracker {
                     }
                 }
             }
+
+            // First time load
+            clearOfflineActiveSignKeys();
         }
     }
 }

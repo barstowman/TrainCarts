@@ -17,15 +17,19 @@ import com.bergerkiller.bukkit.tc.utils.modlist.ModificationTrackedList;
 import org.bukkit.block.Block;
 
 import java.util.*;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.logging.Level;
+import java.util.stream.Collectors;
 
 /**
  * Keeps track of the active signs and detector regions from rail information
  */
 public abstract class SignTracker {
     private static final ArrayList<ActiveSign> tmpSignBuffer = new ArrayList<>();
+    private Set<Object> offlineLoadedSkippedSignKeys = Collections.emptySet();
+    private Set<Object> offlineLoadedActiveSignKeys = Collections.emptySet();
     private final Map<Object, ActiveSign> activeSignsByKey = new LinkedHashMap<Object, ActiveSign>();
     private final ImplicitlySharedList<ActiveSign> activeSigns = new ImplicitlySharedList<>();
     protected ImplicitlySharedList<DetectorRegion> detectorRegions = new ImplicitlySharedList<>();
@@ -44,6 +48,15 @@ public abstract class SignTracker {
     public abstract TrainCarts.Provider getOwner();
 
     /**
+     * Gets the tracker responsible for tracking what signs have been skipped
+     *
+     * @return Sign skip tracker
+     */
+    public SignSkipTracker getSignSkipTracker() {
+        return signSkipTracker;
+    }
+
+    /**
      * Gets all actively tracked signs. Can use implicit clone/copy iteration functions to
      * safely iterate the signs without causing concurrent modification exceptions.
      *
@@ -55,6 +68,56 @@ public abstract class SignTracker {
 
     public Collection<DetectorRegion> getActiveDetectorRegions() {
         return this.detectorRegions;
+    }
+
+    public void addOfflineSkippedSignKey(Object signUniqueKey) {
+        if (offlineLoadedSkippedSignKeys.isEmpty()) {
+            offlineLoadedSkippedSignKeys = new HashSet<>();
+        }
+        offlineLoadedSkippedSignKeys.add(signUniqueKey);
+    }
+
+    protected void addOfflineActiveSignKey(Object signUniqueKey) {
+        if (offlineLoadedActiveSignKeys.isEmpty()) {
+            offlineLoadedActiveSignKeys = new HashSet<>();
+        }
+        offlineLoadedActiveSignKeys.add(signUniqueKey);
+    }
+
+    protected void clearOfflineActiveSignKeys() {
+        offlineLoadedActiveSignKeys = Collections.emptySet();
+        offlineLoadedSkippedSignKeys = Collections.emptySet();
+    }
+
+    protected void signSkipTrackerFilterSigns(List<ActiveSign> signs) {
+        if (!signs.isEmpty()) {
+            // If there's signs the train already had activated, update those in the skip tracker
+            // first. This avoids a skip rule repeating after a reload
+            if (!offlineLoadedActiveSignKeys.isEmpty()) {
+                signSkipTracker.loadSigns(signs.stream()
+                        .filter(s -> offlineLoadedActiveSignKeys.contains(s.getUniqueKey()))
+                        .collect(Collectors.toList()));
+            } else if (!offlineLoadedSkippedSignKeys.isEmpty()) {
+                // Must initialize so that loaded = true, otherwise things reset later
+                signSkipTracker.loadSigns(Collections.emptyList());
+            }
+
+            // Sign set as skipped, must be set skipped
+            if (!offlineLoadedSkippedSignKeys.isEmpty()) {
+                for (ActiveSign sign : signs) {
+                    if (offlineLoadedSkippedSignKeys.contains(sign.getUniqueKey())) {
+                        signSkipTracker.setSkipped(sign);
+                    }
+                }
+            }
+        }
+
+        // Now actually filter the signs list
+        signSkipTracker.filterSigns(signs);
+    }
+
+    public boolean isSkipped(TrackedSign sign) {
+        return signSkipTracker.isSkipped(sign);
     }
 
     public boolean containsSign(TrackedSign sign) {
@@ -99,9 +162,20 @@ public abstract class SignTracker {
     }
 
     /**
-     * Clears all active signs and other Block info, resulting in leave events being fired
+     * Clears all active signs and other Block info, sending a leave event
+     * to all currently active sign actions.
      */
-    public void clear() {
+    public final void clear() {
+        clear(ClearMode.LEAVE);
+    }
+
+    /**
+     * Clears all active signs and other Block info. The clear mode controls what
+     * type of events are notified to the previously active sign actions.
+     *
+     * @param clearMode Clearing Mode
+     */
+    public void clear(ClearMode clearMode) {
         if (!activeSignsByKey.isEmpty()) {
             int maxResetIterCtr = 100; // happens more than this, infinite loop suspected
             int expectedCount = activeSignsByKey.size();
@@ -111,7 +185,7 @@ public abstract class SignTracker {
                 iter.remove();
                 activeSigns.remove(sign);
                 expectedCount--;
-                onSignChange(sign, false);
+                clearMode.eventHandler.accept(this, sign);
 
                 if (expectedCount != activeSignsByKey.size()) {
                     expectedCount = activeSignsByKey.size();
@@ -137,6 +211,13 @@ public abstract class SignTracker {
     }
 
     /**
+     * Disables any previous scheduling of an update using {@link #update()}
+     */
+    public void clearUpdates() {
+        needsUpdate.clear();
+    }
+
+    /**
      * Checks whether the Minecart Member or Group is traveling on top of a given rails block
      *
      * @param railsBlock to check
@@ -148,6 +229,8 @@ public abstract class SignTracker {
     public abstract boolean isOnRails(Block railsBlock);
 
     protected abstract void onSignChange(ActiveSign sign, boolean active);
+
+    protected abstract void onLoadedChange(ActiveSign sign, boolean loaded);
 
     protected void updateActiveSigns(Supplier<ModificationTrackedList<ActiveSign>> activeSignListSupplier) {
         int limit = 1000;
@@ -202,7 +285,7 @@ public abstract class SignTracker {
             // Make sure that when adding a new one, we clone the active sign
             // The active sign might be added to more than one member, and re-using it
             // could seriously break things.
-            ActiveSign currActiveSign = activeSignsByKey.computeIfAbsent(newActiveSign.sign.getUniqueKey(),
+            ActiveSign currActiveSign = activeSignsByKey.computeIfAbsent(newActiveSign.getUniqueKey(),
                     u -> new ActiveSign(newActiveSign.sign, null));
             currActiveSign.detected = true;
 
@@ -211,14 +294,17 @@ public abstract class SignTracker {
                 currActiveSign.enterState = newActiveSign.enterState;
                 activeSigns.add(currActiveSign);
 
-                // Fire enter for new sign
-                onSignChange(currActiveSign, true);
-
+                // Fire enter for new sign (if not reloaded)
+                if (offlineLoadedActiveSignKeys.contains(currActiveSign.getUniqueKey())) {
+                    onLoadedChange(currActiveSign, true);
+                } else {
+                    onSignChange(currActiveSign, true);
+                }
             } else if (currActiveSign.sign != newActiveSign.sign) {
                 // If old and new signs have identical text, don't fire any events
                 if (currActiveSign.sign.hasIdenticalText(newActiveSign.sign)) {
                     // Silent update
-                    currActiveSign.sign = newActiveSign.sign;
+                    currActiveSign.setSign(newActiveSign.sign);
                     continue;
                 }
 
@@ -236,7 +322,7 @@ public abstract class SignTracker {
                 }
 
                 // Update sign
-                currActiveSign.sign = newActiveSign.sign;
+                currActiveSign.setSign(newActiveSign.sign);
 
                 // Fire enter event (again)
                 if (fireEvents) {
@@ -254,7 +340,7 @@ public abstract class SignTracker {
         if (hadSigns) {
             forEachActiveSignSafe(currActiveSign -> {
                 if (!currActiveSign.detected) {
-                    ActiveSign removed = activeSignsByKey.remove(currActiveSign.sign.getUniqueKey());
+                    ActiveSign removed = activeSignsByKey.remove(currActiveSign.getUniqueKey());
                     if (removed != null) {
                         activeSigns.remove(removed);
                     }
@@ -339,16 +425,36 @@ public abstract class SignTracker {
     }
 
     /**
+     * Mode of clearing the signs of a sign tracker
+     */
+    public enum ClearMode {
+        /** Fire a GROUP_UNLOAD event for all currently active signs */
+        UNLOAD((tracker, sign) -> tracker.onLoadedChange(sign, false)),
+        /** Fire a GROUP_LEAVE and MEMBER_LEAVE event for all currently active signs */
+        LEAVE((tracker, sign) -> tracker.onSignChange(sign, false)),
+        /** Do not fire any events */
+        SILENT((tracker, sign) -> {});
+
+        private final BiConsumer<SignTracker, ActiveSign> eventHandler;
+
+        ClearMode(BiConsumer<SignTracker, ActiveSign> eventHandler) {
+            this.eventHandler = eventHandler;
+        }
+    }
+
+    /**
      * A sign activated by a train. Tracks the sign itself, and the state
      * of the member at the time of first activating.
      */
     public static final class ActiveSign {
         private TrackedSign sign;
+        private Object uniqueKey;
         private RailState enterState;
         private boolean detected;
 
         public ActiveSign(TrackedSign sign, RailState enterState) {
             this.sign = sign;
+            this.uniqueKey = sign.getUniqueKey();
             this.enterState = enterState;
             this.detected = true;
         }
@@ -360,6 +466,21 @@ public abstract class SignTracker {
          */
         public TrackedSign getSign() {
             return sign;
+        }
+
+        private void setSign(TrackedSign sign) {
+            this.sign = sign;
+            this.uniqueKey = sign.getUniqueKey();
+        }
+
+        /**
+         * Gets the unique key of the sign. This is what is registered to
+         * uniquely identify this sign.
+         *
+         * @return Sign unique key
+         */
+        public Object getUniqueKey() {
+            return this.uniqueKey;
         }
 
         /**

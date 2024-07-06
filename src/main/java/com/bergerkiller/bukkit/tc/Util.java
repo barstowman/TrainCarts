@@ -1,5 +1,10 @@
 package com.bergerkiller.bukkit.tc;
 
+import java.io.DataInputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,6 +17,9 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 
 import com.bergerkiller.bukkit.common.Common;
@@ -19,6 +27,10 @@ import com.bergerkiller.bukkit.tc.attachments.control.CartAttachmentSeat;
 import com.bergerkiller.bukkit.tc.controller.MinecartMember;
 import com.bergerkiller.bukkit.tc.controller.MinecartMemberStore;
 import com.bergerkiller.generated.net.minecraft.network.protocol.game.PacketPlayOutEntityEquipmentHandle;
+import com.bergerkiller.generated.net.minecraft.server.network.PlayerConnectionHandle;
+import com.bergerkiller.mountiplex.reflection.resolver.Resolver;
+import com.bergerkiller.mountiplex.reflection.util.FastField;
+import com.bergerkiller.mountiplex.reflection.util.FastMethod;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
@@ -46,7 +58,6 @@ import org.bukkit.util.Vector;
 import com.bergerkiller.bukkit.common.MaterialTypeProperty;
 import com.bergerkiller.bukkit.common.config.ConfigurationNode;
 import com.bergerkiller.bukkit.common.config.yaml.YamlPath;
-import com.bergerkiller.bukkit.common.conversion.Conversion;
 import com.bergerkiller.bukkit.common.inventory.ItemParser;
 import com.bergerkiller.bukkit.common.math.Quaternion;
 import com.bergerkiller.bukkit.common.utils.BlockUtil;
@@ -77,17 +88,12 @@ import com.bergerkiller.bukkit.tc.utils.TrackWalkingPoint;
 import com.bergerkiller.generated.net.minecraft.server.level.EntityTrackerEntryStateHandle;
 import com.bergerkiller.generated.net.minecraft.world.level.chunk.ChunkHandle;
 import com.bergerkiller.generated.net.minecraft.world.phys.AxisAlignedBBHandle;
-import com.bergerkiller.reflection.net.minecraft.server.NMSItem;
 
 public class Util {
     public static final MaterialTypeProperty ISVERTRAIL = new MaterialTypeProperty(Material.LADDER);
     public static final MaterialTypeProperty ISTCRAIL = new MaterialTypeProperty(ISVERTRAIL, MaterialUtil.ISRAILS, MaterialUtil.ISPRESSUREPLATE);
     private static final String SEPARATOR_REGEX = "[|/\\\\]";
     private static List<Block> blockbuff = new ArrayList<>();
-
-    public static void setItemMaxSize(Material material, int maxstacksize) {
-        NMSItem.maxStackSize.set(Conversion.toItemHandle.convert(material), maxstacksize);
-    }
 
     // Number format used by stringifyNumberBoxValue
     private static final NumberFormat numberBox_NumberFormat = createNumberFormat(1, 4);
@@ -461,10 +467,10 @@ public class Util {
     }
 
     public static boolean matchText(Collection<String> textValues, String expression) {
-        if (textValues.isEmpty() || expression.isEmpty()) {
-            return false;
-        } else if (expression.startsWith("!")) {
+        if (expression.startsWith("!")) {
             return !matchText(textValues, expression.substring(1));
+        } else if (expression.isEmpty() || textValues.isEmpty()) {
+            return false;
         } else {
             String[] elements = expression.split("\\*");
             boolean first = expression.startsWith("*");
@@ -1757,5 +1763,389 @@ public class Util {
     }
     public static PacketPlayOutEntityEquipmentHandle createNonPlayerEquipmentPacket(int entityId, EquipmentSlot slot, ItemStack itemStack) {
         return CREATE_NON_PLAYER_EQUIPMENT_PACKET.create(entityId, slot, itemStack);
+    }
+
+    /**
+     * Filters all elements of a List. This method relies on the input list being
+     * unmodifiable itself.
+     *
+     * @param list Input List
+     * @param filter Filter Predicate
+     * @return Unmodifiable List filtered by the input filter
+     * @param <T> List Type
+     */
+    public static <T> List<T> filterList(List<T> list, Predicate<T> filter) {
+        return filterAndMapList(list, filter, null);
+    }
+
+    /**
+     * Filters all elements of a List, then maps each value that passes the filter to a new
+     * value. Then collects all those values into a new unmodifiable List. This method
+     * relies on the input list being unmodifiable itself.
+     *
+     * @param list Input List
+     * @param filter Filter Predicate
+     * @param mapper Mapper function to a collection of results for every item. Null maps identity.
+     * @return Mapped, unmodifiable filtered List
+     * @param <I> Input list type
+     * @param <O> Output list type
+     */
+    @SuppressWarnings("unchecked")
+    public static <I, O> List<O> filterAndMapList(List<I> list, Predicate<I> filter, Function<I, O> mapper) {
+        return filterAndMultiMapList(list, filter, mapper == null
+                ? null :
+                i -> Collections.singletonList(mapper.apply(i)));
+    }
+
+    /**
+     * Filters all elements of a List, then maps each value that passes the filter to a new
+     * value. Then collects all those values into a new unmodifiable List. This method
+     * relies on the input list being unmodifiable itself.
+     *
+     * @param list Input List
+     * @param filter Filter Predicate
+     * @param mapper Mapper function to a collection of results for every item. Null maps identity.
+     * @return Mapped, filtered unmodifiable List
+     * @param <I> Input list type
+     * @param <O> Output list type
+     */
+    @SuppressWarnings("unchecked")
+    public static <I, O> List<O> filterAndMultiMapList(List<I> list, Predicate<I> filter, Function<I, Collection<O>> mapper) {
+        int numItems = list.size();
+
+        // Optimization for zero-element or one-element lists
+        if (numItems == 0) {
+            return Collections.emptyList();
+        } else if (numItems == 1) {
+            I first = list.get(0);
+            if (!filter.test(first)) {
+                return Collections.emptyList();
+            } else if (mapper != null) {
+                Collection<O> results = mapper.apply(first);
+                int numResults = results.size();
+                if (numResults == 0) {
+                    return Collections.emptyList();
+                } else if (numResults == 1) {
+                    return Collections.singletonList(results.iterator().next());
+                } else {
+                    return Collections.unmodifiableList(new ArrayList<>(results));
+                }
+            } else {
+                return Collections.singletonList((O) first);
+            }
+        }
+
+        if (mapper != null) {
+            // If a mapper was set we're creating a new list regardless.
+            List<O> result = new ArrayList<>(numItems);
+            for (int i = 0; i < numItems; i++) {
+                I input = list.get(i);
+                if (filter.test(input)) {
+                    result.addAll(mapper.apply(input));
+                }
+            }
+            return Collections.unmodifiableList(result);
+        } else {
+            // Go by all attachments at least once. It's very likely that at this point
+            // all elements will pass the filter. So only create a list copy if we find
+            // an element that should be omitted.
+            for (int i = 0; i < numItems; i++) {
+                I input = list.get(i);
+                if (!filter.test(input)) {
+                    // This one is excluded! Create a new list that excludes this attachment.
+                    // Then populate it with all remaining elements that pass the filter.
+                    List<O> result = new ArrayList<>(numItems - 1);
+                    for (int j = 0; j < i; j++) {
+                        result.add((O) list.get(j));
+                    }
+                    for (int j = i + 1; j < numItems; j++) {
+                        input = list.get(j);
+                        if (filter.test(input)) {
+                            result.add((O) input);
+                        }
+                    }
+                    // Make it unmodifiable again
+                    return Collections.unmodifiableList(result);
+                }
+            }
+
+            // Return all attachments. If a mapper was set, apply it. Otherwise, return as-is.
+            return Collections.unmodifiableList((List<O>) list);
+        }
+    }
+
+    /**
+     * Reads the variable length of a byte array, followed by all the bytes of that
+     * byte array.
+     *
+     * @param stream Input Stream
+     * @return Read Byte Array
+     * @throws IOException
+     */
+    public static byte[] readByteArray(InputStream stream) throws IOException {
+        byte[] data = new byte[readVariableLengthInt(stream)];
+        if (stream instanceof DataInputStream) {
+            ((DataInputStream) stream).readFully(data);
+        } else {
+            // Workaround
+            int remaining = data.length;
+            int offset = 0;
+            while (remaining > 0) {
+                int numRead = stream.read(data, offset, remaining);
+                if (numRead <= 0) {
+                    throw new EOFException(); // Eh?
+                }
+                offset += numRead;
+                remaining -= numRead;
+            }
+        }
+        return data;
+    }
+
+    /**
+     * Writes the length of a byte array followed by the byte array itself
+     *
+     * @param stream Output Stream
+     * @param array Byte Array to write
+     * @throws IOException
+     */
+    public static void writeByteArray(OutputStream stream, byte[] array) throws IOException {
+        writeVariableLengthInt(stream, array.length);
+        stream.write(array);
+    }
+
+    /**
+     * Reads a variable length int from an input stream. Reads as many bytes as needed
+     * to read the full number. Reads fewer bytes for smaller numbers.
+     *
+     * @param stream Input Stream
+     * @return Integer
+     * @throws IOException
+     */
+    public static int readVariableLengthInt(InputStream stream) throws IOException {
+        // Read bytes as 7-bit chunks and keep reading/or-ing while the 8th bit is set
+        int value = 0;
+        int b;
+        do {
+            b = stream.read();
+            if (b == -1) {
+                throw new EOFException("Unexpected end of stream");
+            }
+            value <<= 7;
+            value |= (b & 0x7F);
+        } while ((b & 0x80) != 0);
+
+        return value;
+    }
+
+    /**
+     * Writes a variable length int to an output stream. Writes more bytes for larger
+     * numbers.
+     *
+     * @param stream Output Stream
+     * @param value Integer to write
+     * @throws IOException
+     */
+    public static void writeVariableLengthInt(OutputStream stream, int value) throws IOException {
+        // Get the number of 7-bit chunks to encode the number with some bit magic
+        int numExtraBits = ((Integer.SIZE - Integer.numberOfLeadingZeros(value)) / 7) * 7;
+        while (numExtraBits > 0) {
+            stream.write(0x80 | ((value >> numExtraBits) & 0x7F));
+            numExtraBits -= 7;
+        }
+        stream.write(value & 0x7F);
+    }
+
+    private interface TeleportPositionMethod {
+        boolean teleportPosition(Entity entity, Location to);
+    }
+    private static final TeleportPositionMethod TELEPORT_POSITION_METHOD = findRelativeTeleportMethod();
+    private static TeleportPositionMethod findRelativeTeleportMethod() {
+        // If paper API with teleport flags exists, use that
+        try {
+            // These relative position flags only work for players
+            Class<?> flagsClass = Class.forName("io.papermc.paper.entity.TeleportFlag");
+            Class<?> relativeFlagsClass = Class.forName("io.papermc.paper.entity.TeleportFlag$Relative");
+            final Object[] relativeRotFlags = LogicUtil.createArray(flagsClass, 2);
+            relativeRotFlags[0] = relativeFlagsClass.getField("YAW").get(null);
+            relativeRotFlags[1] = relativeFlagsClass.getField("PITCH").get(null);
+            final FastMethod<Boolean> teleportWithFlagsMethod = new FastMethod<>();
+            teleportWithFlagsMethod.init(Entity.class.getMethod("teleport", Location.class, relativeRotFlags.getClass()));
+            teleportWithFlagsMethod.forceInitialization();
+
+            return (entity, to) -> {
+                if (entity instanceof Player) {
+                    return teleportWithFlagsMethod.invoke(entity, to, relativeRotFlags);
+                } else {
+                    return entity.teleport(to);
+                }
+            };
+        } catch (Throwable t) {
+            /* Ignore, not supported (not paper / old paper) */
+        }
+
+        return Entity::teleport;
+    }
+
+    /**
+     * Teleports an entity to another position without altering its (camera) rotation.
+     *
+     * @param entity Entity to teleport
+     * @param to Destination (position)
+     * @return True if successful, False if cancelled
+     */
+    public static boolean teleportPosition(Entity entity, Location to) {
+        Location toCorrected;
+        if (entity instanceof LivingEntity) {
+            toCorrected = ((LivingEntity) entity).getEyeLocation();
+        } else {
+            toCorrected = entity.getLocation();
+        }
+
+        toCorrected.setWorld(to.getWorld());
+        toCorrected.setX(to.getX());
+        toCorrected.setY(to.getY());
+        toCorrected.setZ(to.getZ());
+        return TELEPORT_POSITION_METHOD.teleportPosition(entity, toCorrected);
+    }
+
+    private static final Consumer<Player> RESET_AWAITING_TELEPORT_METHOD = getAwaitTeleportResetMethod();
+    private static Consumer<Player> getAwaitTeleportResetMethod() {
+        // Use BKCL API for this if available
+        if (Common.hasCapability("Common:ConnectionResetAwaitTeleport")) {
+            return player -> {
+                PlayerConnectionHandle connection = PlayerConnectionHandle.forPlayer(player);
+                if (connection != null) {
+                    connection.resetAwaitTeleport();
+                }
+            };
+        }
+
+        // This is only since MC 1.9
+        if (Common.evaluateMCVersion("<", "1.9")) {
+            return player -> {};
+        }
+
+        // Fallback before an API for this was added in BKCommonLib 1.20.4-v4
+        try {
+            String waitingPositionFromClientName, awaitingTeleportName;
+            if (Common.evaluateMCVersion(">=", "1.17")) {
+                waitingPositionFromClientName = "awaitingPositionFromClient";
+                awaitingTeleportName = "awaitingTeleport";
+            } else {
+                waitingPositionFromClientName = "teleportPos";
+                awaitingTeleportName = "teleportAwait";
+            }
+
+            FastField<Object> awaitingPositionFromClientField = new FastField<>(Resolver.resolveAndGetDeclaredField(
+                    PlayerConnectionHandle.T.getType(), waitingPositionFromClientName));
+            awaitingPositionFromClientField.forceInitialization();
+
+            FastField<Integer> awaitingTeleportField = new FastField<>(Resolver.resolveAndGetDeclaredField(
+                    PlayerConnectionHandle.T.getType(), awaitingTeleportName));
+            awaitingTeleportField.forceInitialization();
+
+            return player -> {
+                PlayerConnectionHandle connection = PlayerConnectionHandle.forPlayer(player);
+                if (connection != null && awaitingPositionFromClientField.get(connection.getRaw()) != null) {
+                    int nextInt = awaitingTeleportField.getInteger(connection.getRaw());
+                    if (++nextInt == Integer.MAX_VALUE) {
+                        nextInt = 0;
+                    }
+                    awaitingTeleportField.setInteger(connection.getRaw(), nextInt);
+                    awaitingPositionFromClientField.set(connection.getRaw(), null);
+                }
+            };
+        } catch (Throwable t) {
+            // Can't use plugin instance to log, annoying clinit stuff
+            Bukkit.getLogger().log(Level.SEVERE, "[TrainCarts] Failed to find reset player teleport, player look orientation might be glitched!", t);
+            return player -> {};
+        }
+    }
+
+    /**
+     * The server keeps track of ongoing teleports that the player has not yet confirmed. It's possible that such an await teleport
+     * gets 'stuck'. This resets it so that normal movement updates work again.
+     *
+     * @param player Player
+     */
+    public static void resetPlayerAwaitingTeleport(Player player) {
+        RESET_AWAITING_TELEPORT_METHOD.accept(player);
+    }
+
+    /**
+     * Un-escapes a previously escaped String
+     *
+     * @param str Input String
+     * @return Unescaped string if the string starts with a quote, otherwise the input string
+     */
+    //TODO: Moved to BKCL (UnquotedCharacterFilter)
+    public static String unescapeString(String str) {
+        // First character must be a " or its not escaped at all. Probably an error.
+        int len = str.length();
+        if (len == 0 || str.charAt(0) != '"') {
+            return str;
+        }
+
+        StringBuilder newStr = new StringBuilder(len - 1);
+        boolean escaped = false;
+        for (int i = 1; i < len; i++) {
+            char c = str.charAt(i);
+            if (escaped) {
+                escaped = false;
+                newStr.append(c);
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                break;
+            } else {
+                newStr.append(c);
+            }
+        }
+        return newStr.toString();
+    }
+
+    /**
+     * Escapes a command argument so it is accepted as an @Quoted argument string. Some characters
+     * aren't allowed unquoted.
+     *
+     * @param text Text
+     * @return Input text if permitted, otherwise quote-escaped
+     */
+    //TODO: Moved to BKCL (UnquotedCharacterFilter)
+    public static String escapeQuotedArgument(String text) {
+        int len = text.length();
+        boolean allowed = true;
+        for (int i = 0; i < len; i++) {
+            if (!isAllowedInUnquotedString(text.charAt(i))) {
+                allowed = false;
+                break;
+            }
+        }
+        if (allowed) {
+            return text;
+        }
+
+        // Escape characters
+        StringBuilder escaped = new StringBuilder(len + 8);
+        escaped.append('"');
+        for (int i = 0; i < len; i++) {
+            char c = text.charAt(i);
+            if (c == '\\' || c == '"') {
+                escaped.append('\\');
+            }
+            escaped.append(c);
+        }
+        escaped.append('"');
+        return escaped.toString();
+    }
+
+    //TODO: Moved to BKCL (UnquotedCharacterFilter)
+    private static boolean isAllowedInUnquotedString(final char c) {
+        return c >= '0' && c <= '9'
+                || c >= 'A' && c <= 'Z'
+                || c >= 'a' && c <= 'z'
+                || c == '_' || c == '-'
+                || c == '.' || c == '+';
     }
 }

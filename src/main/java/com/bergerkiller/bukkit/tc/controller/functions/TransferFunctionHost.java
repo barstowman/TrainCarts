@@ -2,6 +2,8 @@ package com.bergerkiller.bukkit.tc.controller.functions;
 
 import com.bergerkiller.bukkit.common.config.ConfigurationNode;
 import com.bergerkiller.bukkit.tc.TrainCarts;
+import com.bergerkiller.bukkit.tc.attachments.api.Attachment;
+import com.bergerkiller.bukkit.tc.attachments.control.CartAttachmentSequencer;
 import com.bergerkiller.bukkit.tc.controller.MinecartMember;
 import com.bergerkiller.bukkit.tc.controller.functions.inputs.TransferFunctionInput;
 import com.bergerkiller.bukkit.tc.properties.CartProperties;
@@ -48,6 +50,28 @@ public interface TransferFunctionHost extends TrainCarts.Provider {
      * @return Member, null if not available or known
      */
     MinecartMember<?> getMember();
+
+    /**
+     * Gets the attachment that owns this transfer function.
+     *
+     * @return Attachment, null if not available or known
+     */
+    Attachment getAttachment();
+
+    /**
+     * Gets whether this host is part of the {@link CartAttachmentSequencer}
+     *
+     * @return True if a sequencer
+     */
+    boolean isSequencer();
+
+    /**
+     * Gets whether this host is part of an {@link Attachment}. If so,
+     * {@link #getAttachment()} will be available in operation.
+     *
+     * @return True if this host is an attachment
+     */
+    boolean isAttachment();
 
     /**
      * Loads a Transfer Function from configuration

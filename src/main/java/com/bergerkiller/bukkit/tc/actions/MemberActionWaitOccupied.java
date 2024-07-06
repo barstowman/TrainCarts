@@ -10,13 +10,13 @@ import com.bergerkiller.bukkit.tc.controller.status.TrainStatus;
 import com.bergerkiller.bukkit.tc.rails.RailLookup.TrackedSign;
 
 public class MemberActionWaitOccupied extends MemberAction implements WaitAction {
-    private final double maxDistance;
+    private double maxDistance;
     private final long delay;
     private final double launchDistance;
     private final BlockFace launchDirection;
     private final Double launchVelocity;
-    private BlockFace direction;
-    private double launchforce;
+    private BlockFace direction = null;
+    private double launchforce = Double.NaN;
     private int counter = 20;
     private boolean breakCode = false;
     private TrackedSign toggleOutputOf = null;
@@ -44,6 +44,29 @@ public class MemberActionWaitOccupied extends MemberAction implements WaitAction
         return this;
     }
 
+    /**
+     * Gets the sign that this action toggles the lever of. Also indicates the waiter sign that triggered
+     * this action to run.
+     *
+     * @return Tracked Sign
+     */
+    public TrackedSign getToggleOutputOf() {
+        return this.toggleOutputOf;
+    }
+
+    /**
+     * Updates the look-ahead max distance if the input distance is larger than the current one
+     *
+     * @param maxDistance
+     */
+    public void adjustDistance(double maxDistance) {
+        if (maxDistance > this.maxDistance) {
+            this.maxDistance = maxDistance;
+            // May be invalid
+            this.breakCode = false;
+        }
+    }
+
     // Old code. Stop using it, and use getSpeedAhead instead.
     /*
     public static boolean handleOccupied(Block start, BlockFace direction, MinecartMember<?> ignore, int maxdistance) {
@@ -62,8 +85,23 @@ public class MemberActionWaitOccupied extends MemberAction implements WaitAction
 
     @Override
     public void bind() {
-        this.direction = getMember().getDirection();
-        this.launchforce = this.getGroup().getAverageForce();
+        // Initialize the first time it is added to a member
+        if (this.direction == null) {
+            this.direction = getMember().getDirection();
+        }
+        if (Double.isNaN(this.launchforce)) {
+            this.launchforce = this.getGroup().getAverageForce();
+        }
+    }
+
+    /**
+     * Gets the speed at which the train will be launched after waiting. Can be set to NaN if
+     * not yet known.
+     *
+     * @return Launch Force, or NaN if not known.
+     */
+    public double getPostWaitLaunchForce() {
+        return launchforce;
     }
 
     @Override

@@ -31,17 +31,9 @@ import com.bergerkiller.bukkit.tc.properties.api.IPropertyRegistry;
 import com.bergerkiller.bukkit.tc.properties.api.PropertyParseResult;
 import com.bergerkiller.bukkit.tc.properties.standard.StandardProperties;
 import com.bergerkiller.bukkit.tc.signactions.SignActionBlockChanger;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroup;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroupManager;
+import com.bergerkiller.bukkit.tc.offline.train.OfflineGroup;
 import com.bergerkiller.bukkit.tc.utils.FormattedSpeed;
 import com.bergerkiller.bukkit.tc.utils.LauncherConfig;
-
-import cloud.commandframework.annotations.Argument;
-import cloud.commandframework.annotations.CommandDescription;
-import cloud.commandframework.annotations.CommandMethod;
-import cloud.commandframework.annotations.Flag;
-import cloud.commandframework.annotations.specifier.Greedy;
-import cloud.commandframework.annotations.specifier.Quoted;
 
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
@@ -49,6 +41,12 @@ import org.bukkit.Material;
 import org.bukkit.block.BlockFace;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.incendo.cloud.annotation.specifier.Greedy;
+import org.incendo.cloud.annotation.specifier.Quoted;
+import org.incendo.cloud.annotations.Argument;
+import org.incendo.cloud.annotations.Command;
+import org.incendo.cloud.annotations.CommandDescription;
+import org.incendo.cloud.annotations.Flag;
 
 import java.math.RoundingMode;
 import java.text.DecimalFormat;
@@ -58,7 +56,7 @@ import java.util.concurrent.CompletableFuture;
 public class TrainCommands {
 
     @CommandTargetTrain
-    @CommandMethod("train info|i")
+    @Command("train info|i")
     @CommandDescription("Displays the properties of the train")
     private void commandInfo(
             final CommandSender sender,
@@ -129,7 +127,7 @@ public class TrainCommands {
     }
 
     @CommandTargetTrain
-    @CommandMethod("train status")
+    @Command("train status")
     @CommandDescription("Gives a summary about the train's behavior and actions")
     private void commandTrainStatus(
             final CommandSender sender,
@@ -149,7 +147,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_DESTROY)
-    @CommandMethod("train destroy|remove")
+    @Command("train destroy|remove")
     @CommandDescription("Destroys the train, removing all carts")
     private void commandDestroy(
             final CommandSender sender,
@@ -158,7 +156,7 @@ public class TrainCommands {
         MinecartGroup group = properties.getHolder();
         CompletableFuture<Boolean> future;
         if (group == null) {
-            future = OfflineGroupManager.destroyGroupAsync(properties.getTrainName());
+            future = properties.getTrainCarts().getOfflineGroups().destroyGroupAsync(properties.getTrainName());
         } else {
             group.destroy();
             future = CompletableFuture.completedFuture(Boolean.TRUE);
@@ -175,7 +173,7 @@ public class TrainCommands {
 
     @CommandRequiresPermission(Permission.COMMAND_SAVE_TRAIN)
     @CommandRequiresPermission(Permission.COMMAND_SAVEDTRAIN_EXPORT)
-    @CommandMethod("train export|share|paste|upload")
+    @Command("train export|share|paste|upload")
     @CommandDescription("Exports the train configuration to a hastebin server")
     private void commandExport(
             final CommandSender sender,
@@ -188,7 +186,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_SAVE_TRAIN)
-    @CommandMethod("train save <name>")
+    @Command("train save <name>")
     @CommandDescription("Saves the train under a name")
     private void commandSave(
             final CommandSender sender,
@@ -254,7 +252,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_TELEPORT)
-    @CommandMethod("train teleport|tp")
+    @Command("train teleport|tp")
     @CommandDescription("Teleports the player to where the train is")
     private void commandTeleport(
             final Player player,
@@ -262,7 +260,7 @@ public class TrainCommands {
     ) {
         // Check this first, as we cannot load the chunks of an unloaded train
         {
-            OfflineGroup group = OfflineGroupManager.findGroup(properties.getTrainName());
+            OfflineGroup group = properties.getTrainCarts().getOfflineGroups().findGroup(properties.getTrainName());
             if (group != null && !group.world.isLoaded()) {
                 player.sendMessage(ChatColor.RED + "Train is on a world that is not loaded");
                 return;
@@ -284,7 +282,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_ENTER)
-    @CommandMethod("train enter")
+    @Command("train enter")
     @CommandDescription("Teleports the player to the train and enters an available seat")
     private void commandEnter(
             final Player player,
@@ -330,15 +328,13 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_EJECT)
-    @CommandMethod("train eject")
+    @Command("train eject")
     @CommandDescription("Ejects the passengers of all the carts of a train, ignoring the allow player exit property")
     private void commandEject(
             final CommandSender sender,
             final TrainProperties trainProperties,
             final @Flag(value="seat", parserName="trainSeatAttachments") AttachmentsByName<CartAttachmentSeat> seatAttachments
     ) {
-        seatAttachments.validate(); // Fail early
-
         if (!trainProperties.isLoaded()) {
             sender.sendMessage(ChatColor.RED + "Can not eject the train: it is not loaded");
             return;
@@ -347,6 +343,7 @@ public class TrainCommands {
 
         if (seatAttachments != null) {
             // Query seat to eject by name
+            seatAttachments.validate(); // Fail early
             Commands.ejectSeats(sender, seatAttachments);
         } else {
             // All seats of train
@@ -361,7 +358,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_FLIP)
-    @CommandMethod("train flip")
+    @Command("train flip")
     @CommandDescription("Flips the orientation of an entire train 180 degrees")
     private void commandFlip(
             final CommandSender sender,
@@ -386,7 +383,7 @@ public class TrainCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_LAUNCH)
-    @CommandMethod("train launch")
+    @Command("train launch")
     @CommandDescription("Launches the train forwards at station launch speed")
     private void commandTrainLaunchNoArg(
             final CommandSender sender,
@@ -399,7 +396,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_LAUNCH)
-    @CommandMethod("train launch <speed_or_direction>")
+    @Command("train launch <speed_or_direction>")
     @CommandDescription("Launches the train into a direction")
     private void commandTrainLaunch(
             final CommandSender sender,
@@ -425,7 +422,7 @@ public class TrainCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_LAUNCH)
-    @CommandMethod("cart launch")
+    @Command("cart launch")
     @CommandDescription("Launches the cart forwards at station launch speed")
     private void commandCartLaunchNoArg(
             final CommandSender sender,
@@ -437,7 +434,7 @@ public class TrainCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_LAUNCH)
-    @CommandMethod("cart launch <speed_or_direction>")
+    @Command("cart launch <speed_or_direction>")
     @CommandDescription("Launches the train into a direction")
     private void commandCartLaunch(
             final CommandSender sender,
@@ -520,7 +517,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_EFFECT)
-    @CommandMethod("train effect <effect_name>")
+    @Command("train effect <effect_name>")
     @CommandDescription("Plays an effect for the entire train")
     private void commandEffect(
             final CommandSender sender,
@@ -550,7 +547,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_ANIMATE)
-    @CommandMethod("train animate <animation_name>")
+    @Command("train animate <animation_name>")
     @CommandDescription("Plays an animation for the entire train")
     private void commandAnimate(
             final CommandSender sender,
@@ -594,7 +591,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_CHANGEBLOCK)
-    @CommandMethod("train displayedblock clear")
+    @Command("train displayedblock clear")
     @CommandDescription("Clears the displayed block in Minecart carts of the train, making it empty")
     private void commandClearDisplayedBlock(
             final CommandSender sender,
@@ -613,7 +610,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_CHANGEBLOCK)
-    @CommandMethod("train displayedblock type <blocks>")
+    @Command("train displayedblock type <blocks>")
     @CommandDescription("Sets the displayed block in the Minecart carts of the train")
     private void commandChangeDisplayedBlock(
             final CommandSender sender,
@@ -631,7 +628,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_CHANGEBLOCK)
-    @CommandMethod("train displayedblock offset reset")
+    @Command("train displayedblock offset reset")
     @CommandDescription("Resets the height offset at which blocks are displayed in Minecarts of a train to the defaults")
     private void commandResetDisplayedBlockOffset(
             final CommandSender sender,
@@ -650,7 +647,7 @@ public class TrainCommands {
 
     @CommandTargetTrain
     @CommandRequiresPermission(Permission.COMMAND_CHANGEBLOCK)
-    @CommandMethod("train displayedblock offset <offset>")
+    @Command("train displayedblock offset <offset>")
     @CommandDescription("Sets the height offset at which blocks are displayed in Minecarts of a train")
     private void commandSetDisplayedBlockOffset(
             final CommandSender sender,
@@ -669,7 +666,7 @@ public class TrainCommands {
     }
 
     @CommandTargetTrain
-    @CommandMethod("train activespawnlimits clear")
+    @Command("train activespawnlimits clear")
     @CommandDescription("Makes this train stop taking part in active saved train spawn limits")
     @CommandRequiresPermission(Permission.COMMAND_SAVEDTRAIN_SPAWNLIMIT)
     private void commandClearActiveSpawnLimits(
@@ -688,7 +685,7 @@ public class TrainCommands {
     }
 
     @CommandTargetTrain
-    @CommandMethod("train <property> <value>")
+    @Command("train <property> <value>")
     @CommandDescription("Updates the value of a property of a train by name")
     private void commandCart(
               final CommandSender sender,

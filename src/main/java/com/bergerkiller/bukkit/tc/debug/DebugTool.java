@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.Random;
 import java.util.WeakHashMap;
 
+import com.bergerkiller.bukkit.common.inventory.CommonItemStack;
 import org.bukkit.ChatColor;
 import org.bukkit.Color;
 import org.bukkit.Location;
@@ -12,12 +13,10 @@ import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
-import com.bergerkiller.bukkit.common.Task;
 import com.bergerkiller.bukkit.common.bases.IntVector3;
 import com.bergerkiller.bukkit.common.nbt.CommonTagCompound;
 import com.bergerkiller.bukkit.common.offline.OfflineWorld;
 import com.bergerkiller.bukkit.common.utils.CommonUtil;
-import com.bergerkiller.bukkit.common.utils.ItemUtil;
 import com.bergerkiller.bukkit.common.wrappers.HumanHand;
 import com.bergerkiller.bukkit.tc.Permission;
 import com.bergerkiller.bukkit.tc.TrainCarts;
@@ -47,42 +46,49 @@ public class DebugTool {
             return;
         }
 
-        final int PARTICLE_DURATION = 100;
-        final int PARTICLE_INTERVAL = 4;
-        new Task(traincarts) {
-            int life = PARTICLE_DURATION / PARTICLE_INTERVAL;
-
-            @Override
-            public void run() {
-                Random r = new Random();
-                for (MutexZone zone : zones) {
-                    if (zone.slot.isAnonymous()) {
-                        r.setSeed(zone.showDebugColorSeed());
-                    } else {
-                        r.setSeed(zone.slot.getName().hashCode());
-                    }
-                    java.awt.Color awt_color = java.awt.Color.getHSBColor(r.nextFloat(), 1.0f, 1.0f);
-                    Color color = Color.fromRGB(awt_color.getRed(), awt_color.getGreen(), awt_color.getBlue());
-                    zone.showDebug(player, color);
-                }
-
-                if (--life == 0) {
-                    this.stop();
-                }
+        Random r = new Random();
+        for (MutexZone zone : zones) {
+            if (zone.slot.isAnonymous()) {
+                r.setSeed(zone.showDebugColorSeed());
+            } else {
+                r.setSeed(zone.slot.getName().hashCode());
             }
-        }.start(1, PARTICLE_INTERVAL);
+            java.awt.Color awt_color = java.awt.Color.getHSBColor(r.nextFloat(), 1.0f, 1.0f);
+            Color color = Color.fromRGB(awt_color.getRed(), awt_color.getGreen(), awt_color.getBlue());
+            zone.showDebug(player, color);
+        }
+    }
+
+    public static boolean updateToolItem(Player player, CommonItemStack item) {
+        return updateToolItem(player, item.toBukkit());
     }
 
     public static boolean updateToolItem(Player player, ItemStack item) {
-        ItemStack inMainHand = HumanHand.getItemInMainHand(player);
-        if (inMainHand != null) {
-            CommonTagCompound tag = ItemUtil.getMetaTag(inMainHand, false);
-            if (tag != null && tag.containsKey("TrainCartsDebug")) {
-                HumanHand.setItemInMainHand(player, item);
-                return true;
-            }
+        CommonItemStack inMainHand = CommonItemStack.of(HumanHand.getItemInMainHand(player));
+        if (
+                !inMainHand.isEmpty() &&
+                inMainHand.hasCustomData() &&
+                inMainHand.getCustomData().containsKey("TrainCartsDebug")
+        ) {
+            HumanHand.setItemInMainHand(player, item);
+            return true;
         }
+
         return false;
+    }
+
+    /**
+     * Called when a player interacts with a block using a (stick) debug item
+     *
+     * @param traincarts TrainCarts main plugin instance
+     * @param player
+     * @param clickedBlock
+     * @param item
+     * @param isRightClick Whether this is a right click interaction (true) or left-click break (false)
+     * @return true if handled, false if not and should interact like normal
+     */
+    public static boolean onDebugInteract(TrainCarts traincarts, Player player, Block clickedBlock, ItemStack item, boolean isRightClick) {
+        return onDebugInteract(traincarts, player, clickedBlock, CommonItemStack.of(item), isRightClick);
     }
 
     /**
@@ -95,16 +101,12 @@ public class DebugTool {
      * @param isRightClick Whether this is a right click interaction (true) or left-click break (false)
      * @return true if handled, false if not and should interact like normal
      */
-    public static boolean onDebugInteract(TrainCarts traincarts, Player player, Block clickedBlock, ItemStack item, boolean isRightClick) {
-        if (item == null) {
+    public static boolean onDebugInteract(TrainCarts traincarts, Player player, Block clickedBlock, CommonItemStack item, boolean isRightClick) {
+        if (item.isEmpty() || !item.hasCustomData()) {
             return false;
         }
 
-        CommonTagCompound tag = ItemUtil.getMetaTag(item);
-        if (tag == null) {
-            return false;
-        }
-
+        CommonTagCompound tag = item.getCustomData();
         String debugType = tag.getValue("TrainCartsDebug", String.class);
         if (debugType == null) {
             return false;
@@ -124,6 +126,9 @@ public class DebugTool {
             }
             return true;
         }
+
+        // Load metadata
+        match.get().loadMetadata(tag);
 
         // Left click check
         if (!isRightClick && !match.get().handlesLeftClick()) {

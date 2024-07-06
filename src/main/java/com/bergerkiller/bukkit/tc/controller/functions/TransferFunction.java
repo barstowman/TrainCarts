@@ -3,10 +3,13 @@ package com.bergerkiller.bukkit.tc.controller.functions;
 import com.bergerkiller.bukkit.common.config.ConfigurationNode;
 import com.bergerkiller.bukkit.common.map.MapCanvas;
 import com.bergerkiller.bukkit.common.map.MapColorPalette;
+import com.bergerkiller.bukkit.common.map.MapFont;
 import com.bergerkiller.bukkit.common.map.widgets.MapWidget;
-import com.bergerkiller.bukkit.tc.attachments.ui.functions.MapWidgetTransferFunctionDialog;
-import com.bergerkiller.bukkit.tc.attachments.ui.functions.MapWidgetTransferFunctionItem;
+import com.bergerkiller.bukkit.common.map.widgets.MapWidgetText;
+import com.bergerkiller.bukkit.tc.controller.functions.ui.MapWidgetTransferFunctionDialog;
+import com.bergerkiller.bukkit.tc.controller.functions.ui.MapWidgetTransferFunctionItem;
 
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.DoubleUnaryOperator;
 
@@ -65,9 +68,13 @@ public interface TransferFunction extends DoubleUnaryOperator, Cloneable {
      * Gets whether the output of this transfer function is a boolean. That is,
      * {@link #map(double)} return 1.0 for true and 0.0 for false.
      *
+     * @param isBooleanInput Whether the input to this function is a boolean, too.
+     *                       Functions that can return the input can infer from that.
+     *                       If not needed to come to an answer, don't call it to
+     *                       save on computation.
      * @return True if map() returns a boolean output
      */
-    default boolean isBooleanOutput() {
+    default boolean isBooleanOutput(BooleanSupplier isBooleanInput) {
         return false;
     }
 
@@ -148,6 +155,23 @@ public interface TransferFunction extends DoubleUnaryOperator, Cloneable {
         void setFunction(TransferFunction function);
 
         /**
+         * Gets whether the input to the function being configured is a boolean
+         *
+         * @return True if the input is a boolean
+         */
+        boolean isBooleanInput();
+
+        /**
+         * Gets whether the previous function being configured in this dialog was
+         * the function specified. Can be used to re-focus the right widgets
+         * when the player goes 'back'.
+         *
+         * @param functionHolder Function Holder to test
+         * @return True if the previous function being configured was for this holder
+         */
+        boolean isPreviousFunction(Holder<?> functionHolder);
+
+        /**
          * Sends a signal that the existing transfer function instance has changed.
          * Same as calling {@link #setFunction(TransferFunction)} with the current
          * instance.
@@ -187,6 +211,72 @@ public interface TransferFunction extends DoubleUnaryOperator, Cloneable {
         default int getHeight() {
             return getWidget().getHeight();
         }
+
+        /**
+         * Adds a tiny-font label somewhere on the dialog
+         *
+         * @param x X-position
+         * @param y Y-position
+         * @param color Text color of the label
+         * @param text Text of the label
+         */
+        default void addLabel(int x, int y, byte color, String text) {
+            MapWidgetText label = new MapWidgetText();
+            label.setFont(MapFont.TINY);
+            label.setText(text);
+            label.setPosition(x, y);
+            label.setColor(color);
+            this.addWidget(label);
+        }
+
+        /**
+         * Creates a new Dialog that wraps a different widget. All other methods are proxied
+         * from this original dialog. This can be used when a part of the original dialog's
+         * space is used to show a smaller (part of a-) dialog.
+         *
+         * @param widget Widget to wrap. Width/height/etc. will be of this widget.
+         * @return Updated Dialog
+         */
+        default Dialog wrapWidget(final MapWidget widget) {
+            final Dialog original = this;
+            return new Dialog() {
+
+                @Override
+                public MapWidget getWidget() {
+                    return widget;
+                }
+
+                @Override
+                public TransferFunctionHost getHost() {
+                    return original.getHost();
+                }
+
+                @Override
+                public void setFunction(TransferFunction function) {
+                    original.setFunction(function);
+                }
+
+                @Override
+                public boolean isBooleanInput() {
+                    return original.isBooleanInput();
+                }
+
+                @Override
+                public boolean isPreviousFunction(Holder<?> functionHolder) {
+                    return original.isPreviousFunction(functionHolder);
+                }
+
+                @Override
+                public void markChanged() {
+                    original.markChanged();
+                }
+
+                @Override
+                public void finish() {
+                    original.finish();
+                }
+            };
+        }
     }
 
     /**
@@ -199,8 +289,9 @@ public interface TransferFunction extends DoubleUnaryOperator, Cloneable {
         protected T function;
         protected boolean isDefault = false;
 
-        protected Holder(T function) {
+        protected Holder(T function, boolean isDefault) {
             this.function = function;
+            this.isDefault = isDefault;
         }
 
         public T getFunction() {
@@ -238,16 +329,36 @@ public interface TransferFunction extends DoubleUnaryOperator, Cloneable {
          * @param onChanged Callback for after the function is changed
          * @return new Holder that calls the callback when the function is changed
          */
-        public Holder<T> withChangeListener(Consumer<T> onChanged) {
+        public Holder<T> withChangeListener(Consumer<Holder<T>> onChanged) {
             final Holder<T> orig = this;
-            return new Holder<T>(function) {
+            return new Holder<T>(function, isDefault) {
                 @Override
                 public void setFunction(T function, boolean isDefault) {
                     super.setFunction(function, isDefault);
                     orig.setFunction(function, isDefault);
-                    onChanged.accept(function);
+                    onChanged.accept(this);
+                }
+
+                @Override
+                protected Holder<?> rootHolder() {
+                    return orig.rootHolder();
                 }
             };
+        }
+
+        /**
+         * Gets whether this holder is ultimately the same as another one.
+         * This survives wrapping with {@link #withChangeListener(Consumer)}
+         *
+         * @param other Other Holder
+         * @return True if the same
+         */
+        public final boolean isSame(Holder<?> other) {
+            return this.rootHolder() == other.rootHolder();
+        }
+
+        protected Holder<?> rootHolder() {
+            return this;
         }
 
         /**
@@ -258,7 +369,19 @@ public interface TransferFunction extends DoubleUnaryOperator, Cloneable {
          * @param <T> Transfer Function type
          */
         public static <T extends TransferFunction> Holder<T> of(T function) {
-            return new Holder<T>(function);
+            return new Holder<T>(function, false);
+        }
+
+        /**
+         * Wraps a TransferFunction as a Holder, potentailly a default value
+         *
+         * @param function Function
+         * @param isDefault Whether this function is the default value (no config)
+         * @return Holder
+         * @param <T> Transfer Function type
+         */
+        public static <T extends TransferFunction> Holder<T> of(T function, boolean isDefault) {
+            return new Holder<T>(function, isDefault);
         }
     }
 
@@ -301,11 +424,12 @@ public interface TransferFunction extends DoubleUnaryOperator, Cloneable {
 
         /**
          * Gets whether this transfer function is listed in the 'create new transfer function'
-         * dialog.
+         * dialog. The input host can be queried to test compatibility.
          *
+         * @param host TransferFunctionHost that will contain this transfer function
          * @return True if listed (default)
          */
-        default boolean isListed() {
+        default boolean isListed(TransferFunctionHost host) {
             return true;
         }
 

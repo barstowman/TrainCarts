@@ -4,7 +4,9 @@ import com.bergerkiller.bukkit.common.config.ConfigurationNode;
 import com.bergerkiller.bukkit.common.map.MapCanvas;
 import com.bergerkiller.bukkit.common.map.MapColorPalette;
 import com.bergerkiller.bukkit.common.map.MapFont;
-import com.bergerkiller.bukkit.tc.attachments.ui.functions.MapWidgetTransferFunctionItem;
+import com.bergerkiller.bukkit.tc.controller.functions.ui.MapWidgetTransferFunctionItem;
+
+import java.util.function.BooleanSupplier;
 
 /**
  * A special identity transfer function, where map() simply returns the input.
@@ -24,7 +26,7 @@ class TransferFunctionIdentity implements TransferFunction {
         }
 
         @Override
-        public boolean isListed() {
+        public boolean isListed(TransferFunctionHost host) {
             return false;
         }
 
@@ -62,13 +64,18 @@ class TransferFunctionIdentity implements TransferFunction {
     }
 
     @Override
+    public boolean isBooleanOutput(BooleanSupplier isBooleanInput) {
+        return isBooleanInput.getAsBoolean();
+    }
+
+    @Override
     public TransferFunction clone() {
         return INSTANCE;
     }
 
     @Override
     public void drawPreview(MapWidgetTransferFunctionItem widget, MapCanvas view) {
-        view.draw(MapFont.MINECRAFT, 2, 3, MapColorPalette.COLOR_YELLOW, "[Input]");
+        view.draw(MapFont.MINECRAFT, 2, 3, MapColorPalette.COLOR_BLUE, "<Input>");
     }
 
     @Override

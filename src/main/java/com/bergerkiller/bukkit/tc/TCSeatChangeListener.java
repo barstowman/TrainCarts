@@ -147,7 +147,11 @@ public class TCSeatChangeListener implements Listener {
             }
 
             Util.correctTeleportPosition(loc);
-            e.teleport(loc);
+            if (event.isExitRotationPreserved()) {
+                Util.teleportPosition(e, loc);
+            } else {
+                e.teleport(loc);
+            }
         }
     }
 
@@ -168,7 +172,7 @@ public class TCSeatChangeListener implements Listener {
         event.getMember().onPropertiesChanged();
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onMemberSeatEnterMonitor(MemberSeatEnterEvent event) {
         if (event.getEntity() instanceof Player) {
             Player player = (Player) event.getEntity();
@@ -342,14 +346,19 @@ public class TCSeatChangeListener implements Listener {
                 // Fire cancellable before-exit event
                 final Location seatPosition = seat.getPosition(event.getExited());
                 final Location exitPosition;
+                final boolean exitPreservePlayerRotation;
                 {
                     MemberBeforeSeatExitEvent memberExitEvent = new MemberBeforeSeatExitEvent(seat, event.getExited(),
-                            seatPosition, seat.getEjectPosition(event.getExited()), playerInitiated);
+                            seatPosition,
+                            seat.getEjectPosition(event.getExited()),
+                            seat.isEjectRotationPreserved(),
+                            playerInitiated);
                     if (CommonUtil.callEvent(memberExitEvent).isCancelled()) {
                         event.setCancelled(true);
                         return;
                     }
                     exitPosition = memberExitEvent.getExitPosition();
+                    exitPreservePlayerRotation = memberExitEvent.isExitPlayerRotationPreserved();
                 }
 
                 // Next tick, if passenger is indeed no longer in this seat, fire a
@@ -357,6 +366,11 @@ public class TCSeatChangeListener implements Listener {
                 final Entity vehicle = event.getVehicle();
                 final Entity passenger = event.getExited();
                 CommonUtil.nextTick(() -> {
+                    // If member is dead, ignore
+                    if (member.isUnloaded()) {
+                        return;
+                    }
+
                     // Before resuming ensure that the network controller has updated
                     // This releases the entity from the seat, so that the entity can be properly teleported
                     // afterwards. It might be the Minecart got deleted after a tick so be careful here.
@@ -368,7 +382,7 @@ public class TCSeatChangeListener implements Listener {
                     }
 
                     if (passenger.getVehicle() != vehicle) {
-                        CommonUtil.callEvent(new MemberSeatExitEvent(seat, passenger, seatPosition, exitPosition, playerInitiated));
+                        CommonUtil.callEvent(new MemberSeatExitEvent(seat, passenger, seatPosition, exitPosition, exitPreservePlayerRotation, playerInitiated));
                     }
                 });
             }

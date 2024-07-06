@@ -14,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 
 import com.bergerkiller.bukkit.tc.properties.defaults.DefaultProperties;
+import com.bergerkiller.bukkit.tc.properties.standard.type.ChunkLoadOptions;
 import org.bukkit.GameMode;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
@@ -24,7 +25,6 @@ import com.bergerkiller.bukkit.common.chunk.ChunkFutureProvider;
 import com.bergerkiller.bukkit.common.chunk.ForcedChunk;
 import com.bergerkiller.bukkit.common.config.ConfigurationNode;
 import com.bergerkiller.bukkit.common.utils.LogicUtil;
-import com.bergerkiller.bukkit.common.utils.MathUtil;
 import com.bergerkiller.bukkit.common.utils.ParseUtil;
 import com.bergerkiller.bukkit.common.utils.WorldUtil;
 import com.bergerkiller.bukkit.tc.CollisionMode;
@@ -46,8 +46,7 @@ import com.bergerkiller.bukkit.tc.properties.standard.type.SignSkipOptions;
 import com.bergerkiller.bukkit.tc.properties.standard.type.SlowdownMode;
 import com.bergerkiller.bukkit.tc.properties.standard.type.TrainNameFormat;
 import com.bergerkiller.bukkit.tc.properties.standard.type.WaitOptions;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroup;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroupManager;
+import com.bergerkiller.bukkit.tc.offline.train.OfflineGroup;
 import com.bergerkiller.bukkit.tc.utils.SoftReference;
 
 public class TrainProperties extends TrainPropertiesStore implements IProperties {
@@ -58,6 +57,7 @@ public class TrainProperties extends TrainPropertiesStore implements IProperties
     private final FieldBackedStandardTrainProperty.TrainInternalDataHolder standardProperties = new FieldBackedStandardTrainProperty.TrainInternalDataHolder();
     private final ConfigurationNode config;
     protected String trainname;
+    protected boolean removed;
 
     /**
      * Creates new TrainProperties<br>
@@ -71,6 +71,7 @@ public class TrainProperties extends TrainPropertiesStore implements IProperties
         this.traincarts = traincarts;
         this.trainname = trainname;
         this.config = config;
+        this.removed = true; // Not added to a map yet
 
         // Pre-initialize the cart configuration, if such is available
         if (config.isNode("carts")) {
@@ -106,6 +107,11 @@ public class TrainProperties extends TrainPropertiesStore implements IProperties
     @Override
     public final ConfigurationNode getConfig() {
         return this.config;
+    }
+
+    @Override
+    public boolean isRemoved() {
+        return removed;
     }
 
     @Override
@@ -159,19 +165,15 @@ public class TrainProperties extends TrainPropertiesStore implements IProperties
             return CompletableFuture.completedFuture(true);
         }
         // Load all the chunks of this group to trigger a restore
-        OfflineGroup group = OfflineGroupManager.findGroup(this.trainname);
+        OfflineGroup group = getTrainCarts().getOfflineGroups().findGroup(this.trainname);
         if (group == null) {
             return CompletableFuture.completedFuture(false);
         }
 
-        List<ForcedChunk> chunksOfTrain = new ArrayList<>();
-        World world = group.world.getLoadedWorld();
+        final List<ForcedChunk> chunksOfTrain = new ArrayList<>();
+        final World world = group.world.getLoadedWorld();
         if (world != null) {
-            for (long chunk : group.chunks) {
-                chunksOfTrain.add(WorldUtil.forceChunkLoaded(world,
-                        MathUtil.longHashMsw(chunk),
-                        MathUtil.longHashLsw(chunk)));
-            }
+            group.forAllChunks((cx, cz) -> chunksOfTrain.add(WorldUtil.forceChunkLoaded(world, cx, cz)));
         }
         CompletableFuture<Void> whenAllChunkEntitiesLoaded;
         whenAllChunkEntitiesLoaded = loadChunkFutureWithFutureProvider(traincarts, chunksOfTrain);
@@ -478,18 +480,45 @@ public class TrainProperties extends TrainPropertiesStore implements IProperties
      * Gets whether this Train keeps nearby chunks loaded
      *
      * @return True or False
+     * @see #getChunkLoadOptions()
      */
     public boolean isKeepingChunksLoaded() {
-        return get(StandardProperties.KEEP_CHUNKS_LOADED);
+        return get(StandardProperties.CHUNK_LOAD_OPTIONS).keepLoaded();
     }
 
     /**
-     * Sets whether this Train keeps nearby chunks loaded
+     * Sets whether this Train keeps nearby chunks loaded. Use the
+     * {@link #setChunkLoadOptions(ChunkLoadOptions)} method for a more fine-grained
+     * control over this. This method merely toggles between simulating between modes
+     * FULL (true) and DISABLED (false).
      *
      * @param state to set to
+     * @see #setChunkLoadOptions(ChunkLoadOptions)
      */
     public void setKeepChunksLoaded(boolean state) {
-        set(StandardProperties.KEEP_CHUNKS_LOADED, state);
+        setChunkLoadOptions(getChunkLoadOptions().withMode(
+                state ? ChunkLoadOptions.Mode.FULL : ChunkLoadOptions.Mode.DISABLED));
+    }
+
+    /**
+     * Gets the chunk loader configuration of this train
+     *
+     * @return Chunk loading options
+     */
+    public ChunkLoadOptions getChunkLoadOptions() {
+        return get(StandardProperties.CHUNK_LOAD_OPTIONS);
+    }
+
+    /**
+     * Sets the chunk loader configuration of this train. Unlike the
+     * {@link #setKeepChunksLoaded(boolean)} option this option allows
+     * control over the chunk loading radius and whether the loaded chunks
+     * simulate entities/redstone.
+     *
+     * @param options New options
+     */
+    public void setChunkLoadOptions(ChunkLoadOptions options) {
+        set(StandardProperties.CHUNK_LOAD_OPTIONS, options);
     }
 
     /**

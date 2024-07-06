@@ -1,22 +1,18 @@
 package com.bergerkiller.bukkit.tc.commands;
 
-import cloud.commandframework.ArgumentDescription;
-import cloud.commandframework.CommandManager;
-import cloud.commandframework.annotations.InitializationMethod;
 import com.bergerkiller.bukkit.common.Common;
 import com.bergerkiller.bukkit.common.MessageBuilder;
 import com.bergerkiller.bukkit.common.Task;
 import com.bergerkiller.bukkit.common.bases.IntVector3;
-import com.bergerkiller.bukkit.common.cloud.parsers.SoundEffectArgument;
+import com.bergerkiller.bukkit.common.cloud.parsers.SoundEffectParser;
 import com.bergerkiller.bukkit.common.entity.CommonEntity;
 import com.bergerkiller.bukkit.common.internal.CommonPlugin;
+import com.bergerkiller.bukkit.common.inventory.CommonItemStack;
 import com.bergerkiller.bukkit.common.map.MapDisplay;
 import com.bergerkiller.bukkit.common.map.widgets.MapWidget;
 import com.bergerkiller.bukkit.common.math.Matrix4x4;
-import com.bergerkiller.bukkit.common.nbt.CommonTagCompound;
 import com.bergerkiller.bukkit.common.resources.ResourceKey;
 import com.bergerkiller.bukkit.common.resources.SoundEffect;
-import com.bergerkiller.bukkit.common.utils.ItemUtil;
 import com.bergerkiller.bukkit.common.utils.MathUtil;
 import com.bergerkiller.bukkit.common.utils.StringUtil;
 import com.bergerkiller.bukkit.common.utils.WorldUtil;
@@ -39,18 +35,8 @@ import com.bergerkiller.bukkit.tc.pathfinding.PathNode;
 import com.bergerkiller.bukkit.tc.pathfinding.PathWorld;
 import com.bergerkiller.bukkit.tc.properties.TrainProperties;
 import com.bergerkiller.bukkit.tc.statements.Statement;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroupManager;
 
-import cloud.commandframework.annotations.Argument;
-import cloud.commandframework.annotations.CommandDescription;
-import cloud.commandframework.annotations.CommandMethod;
-import cloud.commandframework.annotations.CommandPermission;
-import cloud.commandframework.annotations.Flag;
-import cloud.commandframework.annotations.Hidden;
-import cloud.commandframework.annotations.specifier.Greedy;
-import cloud.commandframework.annotations.specifier.Quoted;
-import cloud.commandframework.annotations.specifier.Range;
-
+import com.bergerkiller.bukkit.tc.tickets.TicketStore;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Effect;
@@ -60,8 +46,16 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Minecart;
 import org.bukkit.entity.Player;
-import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
+import org.incendo.cloud.CommandManager;
+import org.incendo.cloud.annotation.specifier.Greedy;
+import org.incendo.cloud.annotation.specifier.Quoted;
+import org.incendo.cloud.annotation.specifier.Range;
+import org.incendo.cloud.annotations.Argument;
+import org.incendo.cloud.annotations.Command;
+import org.incendo.cloud.annotations.CommandDescription;
+import org.incendo.cloud.annotations.Flag;
+import org.incendo.cloud.description.Description;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
@@ -73,7 +67,7 @@ import java.util.regex.Pattern;
 
 public class GlobalCommands {
 
-    @CommandMethod("train version")
+    @Command("train version")
     @CommandDescription("Shows installed version of TrainCarts and BKCommonLib")
     private void commandShowVersion(
             final CommandSender sender,
@@ -82,9 +76,9 @@ public class GlobalCommands {
         plugin.onVersionCommand("version", sender);
     }
 
-    @CommandMethod("train startuplog")
+    @Command("train startuplog")
     @CommandDescription("Views everything logged during startup of TrainCarts")
-    @CommandPermission("bkcommonlib.command.startuplog")
+    @org.incendo.cloud.annotations.Permission("bkcommonlib.command.startuplog")
     private void commandShowStartupLog(
             final CommandSender sender,
             final TrainCarts plugin
@@ -92,7 +86,7 @@ public class GlobalCommands {
         plugin.onStartupLogCommand(sender, "startuplog", new String[0]);
     }
 
-    @CommandMethod("train list destinations")
+    @Command("train list destinations")
     @CommandDescription("Lists all the destination names that exist on the server")
     private void commandListDestinations(
             final CommandSender sender,
@@ -118,7 +112,7 @@ public class GlobalCommands {
         builder.send(sender);
     }
 
-    @CommandMethod("train list [filter]")
+    @Command("train list [filter]")
     @CommandDescription("Lists all the trains on the server that match the specified statement")
     private void commandListTrains(
             final TrainCarts plugin,
@@ -137,7 +131,7 @@ public class GlobalCommands {
                 // Get properties: ensures that ALL trains are listed
                 group.getProperties();
             }
-            count += OfflineGroupManager.getStoredCountInLoadedWorlds();
+            count += plugin.getOfflineGroups().getStoredCountInLoadedWorlds();
             int minecartCount = 0;
             for (World world : WorldUtil.getWorlds()) {
                 for (org.bukkit.entity.Entity e : WorldUtil.getEntities(world)) {
@@ -159,7 +153,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_MESSAGE)
-    @CommandMethod("train message <key>")
+    @Command("train message <key>")
     @CommandDescription("Checks what value is assigned to a given message key")
     private void commandGetMessage(
             final CommandSender sender,
@@ -174,7 +168,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_MESSAGE)
-    @CommandMethod("train message <key> <value>")
+    @Command("train message <key> <value>")
     @CommandDescription("Checks what value is assigned to a given message key")
     private void commandSetMessage(
             final CommandSender sender,
@@ -190,43 +184,47 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_DESTROYALL)
-    @CommandMethod("train destroyall|removeall")
+    @Command("train destroyall|removeall")
     @CommandDescription("Destroys all trains on the server or world")
     private void commandDestroyAll(
             final CommandSender sender,
+            final TrainCarts plugin,
             final @Flag("world") World world,
             final @Flag(value="vanilla",
                         description="Whether to destroy non-Traincarts vanilla Minecarts too") boolean destroyVanilla
     ) {
         // Destroy all trains on the entire server (or on one world)
         CompletableFuture<Integer> future = (world == null)
-                ? OfflineGroupManager.destroyAllAsync(destroyVanilla)
-                : OfflineGroupManager.destroyAllAsync(world, destroyVanilla);
+                ? plugin.getOfflineGroups().destroyAllAsync(destroyVanilla)
+                : plugin.getOfflineGroups().destroyAllAsync(world, destroyVanilla);
         future.thenAccept(count -> {
             sender.sendMessage(ChatColor.RED.toString() + count + " (visible) trains have been destroyed!");  
         });
     }
 
-    @InitializationMethod
+    public void init(CommandManager<CommandSender> manager) {
+        initTrainMenuSetSoundCommand(manager);
+    }
+
     private void initTrainMenuSetSoundCommand(CommandManager<CommandSender> manager) {
         if (!Common.hasCapability("Common:Sound:CloudParser")) {
             return;
         }
 
         manager.command(manager.commandBuilder("train").literal("menu")
-                .literal("sound", ArgumentDescription.of("Sets a sound effect in the TrainCarts editor map"))
-                .argument(SoundEffectArgument.of("path"))
+                .literal("sound", Description.of("Sets a sound effect in the TrainCarts editor map"))
+                .required("path", SoundEffectParser.soundEffectParser())
                 .permission(Permission.COMMAND_GIVE_EDITOR.cloudPermission())
                 .senderType(Player.class)
                 .handler(context -> {
-                    Player sender = (Player) context.getSender();
+                    Player sender = context.sender();
                     ResourceKey<SoundEffect> effect = context.get("path");
                     commandMenuSet(sender, SetValueTarget.Operation.SET, effect.getPath());
                 }));
     }
 
     @CommandRequiresPermission(Permission.COMMAND_GIVE_EDITOR)
-    @CommandMethod("train menu <operation> <value>")
+    @Command("train menu <operation> <value>")
     @CommandDescription("Updates a menu item in a TrainCarts editor map using commands")
     private void commandMenuSet(
             final Player sender,
@@ -265,7 +263,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_REROUTE)
-    @CommandMethod("train reroute")
+    @Command("train reroute")
     @CommandDescription("Recalculates all path finding information on the server")
     private void commandReroute(
             final CommandSender sender,
@@ -298,7 +296,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_RELOAD)
-    @CommandMethod("train globalconfig reload|load")
+    @Command("train globalconfig reload|load")
     @CommandDescription("Reloads one or more global TrainCarts configuration files from disk")
     private void commandReloadConfig(
             final CommandSender sender,
@@ -306,18 +304,24 @@ public class GlobalCommands {
             final @Flag(value="config", description="Reload config.yml") boolean config,
             final @Flag(value="routes", description="Reload routes.yml") boolean routes,
             final @Flag(value="defaulttrainproperties", description="Reload DefaultTrainProperties.yml") boolean defaultTrainproperties,
-            final @Flag(value="savedtrainproperties", description="Reload SavedTrainProperties.yml and modules") boolean savedTrainproperties
+            final @Flag(value="savedtrainproperties", description="Reload SavedTrainProperties.yml and modules") boolean savedTrainproperties,
+            final @Flag(value="modelstore", description="Reload SavedModels.yml and modules") boolean modelStore,
+            final @Flag(value="tickets", description="Reload tickets.yml") boolean tickets
     ) {
         if (!config &&
             !routes &&
             !defaultTrainproperties &&
-            !savedTrainproperties
+            !savedTrainproperties &&
+            !modelStore &&
+            !tickets
         ) {
-            sender.sendMessage(ChatColor.RED + "Please specify one or more configuration file to reload:");
+            sender.sendMessage(ChatColor.RED + "Please specify one or more configuration files to reload:");
             sender.sendMessage(ChatColor.RED + "/train globalconfig reload --config");
             sender.sendMessage(ChatColor.RED + "/train globalconfig reload --routes");
             sender.sendMessage(ChatColor.RED + "/train globalconfig reload --defaulttrainproperties");
             sender.sendMessage(ChatColor.RED + "/train globalconfig reload --savedtrainproperties");
+            sender.sendMessage(ChatColor.RED + "/train globalconfig reload --modelstore");
+            sender.sendMessage(ChatColor.RED + "/train globalconfig reload --tickets");
             return;
         }
 
@@ -333,21 +337,27 @@ public class GlobalCommands {
         if (savedTrainproperties) {
             traincarts.getSavedTrains().reload();
         }
+        if (modelStore) {
+            traincarts.getSavedAttachmentModels().reload();
+        }
+        if (tickets) {
+            TicketStore.load(traincarts);
+        }
         sender.sendMessage(ChatColor.YELLOW + "Configuration has been reloaded!");
     }
 
     @CommandRequiresPermission(Permission.COMMAND_SAVEALL)
-    @CommandMethod("train globalconfig save")
+    @Command("train globalconfig save")
     @CommandDescription("Forces a save of all configuration to disk")
     private void commandReloadConfig(
             final CommandSender sender,
             final TrainCarts plugin
     ) {
-        plugin.save(false);
+        plugin.save(TrainCarts.SaveMode.COMMAND);
         sender.sendMessage(ChatColor.YELLOW + "TrainCarts' information has been saved to file.");
     }
 
-    @CommandMethod("train edit")
+    @Command("train edit")
     @CommandDescription("Selects a train the player is looking at for editing")
     private void commandEditLookingAt(
             final TrainCarts plugin,
@@ -409,7 +419,7 @@ public class GlobalCommands {
                 @Override
                 public void run() {
                     for (int i = 0; i < batch_ctr; i++) {
-                        if (dy > 50.0 || !player.isOnline() || memberEntity.isDead()) {
+                        if (dy > 50.0 || !player.isValid() || memberEntity.isDead()) {
                             stop();
                             return;
                         }
@@ -431,12 +441,12 @@ public class GlobalCommands {
         }
     }
 
-    @CommandMethod("train edit <trainname>")
+    @Command("train edit <trainname>")
     @CommandDescription("Forcibly removes minecarts and trackers that have glitched out")
     private void commandEditByName(
             final TrainCarts plugin,
             final Player sender,
-            final @Quoted @Argument(value="trainname", suggestions="trainnames") String trainName
+            final @Quoted @Argument(value="trainname", suggestions="quoted_trainnames") String trainName
     ) {
         TrainProperties prop = TrainProperties.get(trainName);
         if (prop == null) {
@@ -456,7 +466,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_CHANGETICK)
-    @CommandMethod("train tick disable")
+    @Command("train tick disable")
     @CommandDescription("Disables ticking of all trains, causing all physics to pause")
     private void commandTickDisable(
             final CommandSender sender,
@@ -466,7 +476,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_CHANGETICK)
-    @CommandMethod("train tick enable")
+    @Command("train tick enable")
     @CommandDescription("Enables ticking of all trains, causing all physics to resume")
     private void commandTickEnable(
             final CommandSender sender,
@@ -476,7 +486,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_CHANGETICK)
-    @CommandMethod("train tick toggle")
+    @Command("train tick toggle")
     @CommandDescription("Toggles ticking of all trains, causing all physics to pause or resume")
     private void commandTickToggle(
             final CommandSender sender,
@@ -492,7 +502,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_CHANGETICK)
-    @CommandMethod("train tick div")
+    @Command("train tick div")
     @CommandDescription("Checks what kind of tick divider configuration is configured")
     private void commandGetTickDivider(
             final CommandSender sender,
@@ -507,7 +517,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_CHANGETICK)
-    @CommandMethod("train tick div reset")
+    @Command("train tick div reset")
     @CommandDescription("Resets any previous global tick divider, resuming physics as normal")
     private void commandResetTickDivider(
             final CommandSender sender,
@@ -517,7 +527,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_CHANGETICK)
-    @CommandMethod("train tick div <divider>")
+    @Command("train tick div <divider>")
     @CommandDescription("Configures a global tick divider, causing all physics to run more slowly")
     private void commandSetTickDivider(
             final CommandSender sender,
@@ -534,7 +544,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_CHANGETICK)
-    @CommandMethod("train tick")
+    @Command("train tick")
     @CommandDescription("Performs a single update tick. Useful when automatic ticking is disabled or slowed down.")
     private void commandPerformTick(
             final CommandSender sender,
@@ -544,7 +554,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_CHANGETICK)
-    @CommandMethod("train tick <times>")
+    @Command("train tick <times>")
     @CommandDescription("Performs a burst of update ticks. Useful when automatic ticking is disabled or slowed down.")
     private void commandPerformTick(
             final CommandSender sender,
@@ -560,7 +570,7 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_ISSUE)
-    @CommandMethod("train issue")
+    @Command("train issue")
     @CommandDescription("Shows helpful information for posting an issue ticket on our Github")
     private void commandIssueTicket(
             final CommandSender sender,
@@ -661,9 +671,8 @@ public class GlobalCommands {
         }
     }
 
-    @Hidden
     @CommandRequiresPermission(Permission.COMMAND_GIVE_EDITOR)
-    @CommandMethod("train debug editor")
+    @Command("train debug editor")
     @CommandDescription("Gives a legacy editor map item (broken)")
     private void commandGiveEditor(
             final Player sender
@@ -673,17 +682,15 @@ public class GlobalCommands {
     }
 
     @CommandRequiresPermission(Permission.COMMAND_GIVE_EDITOR)
-    @CommandMethod("train attachments")
+    @Command("train attachments")
     @CommandDescription("Gives an attachment editor map item to the player")
     private void commandGiveAttachmentEditor(
             final Player sender
     ) {
-        ItemStack item = MapDisplay.createMapItem(AttachmentEditor.class);
-        ItemUtil.setDisplayName(item, "Traincarts Attachments Editor");
-        CommonTagCompound tag = ItemUtil.getMetaTag(item, true);
-        CommonTagCompound display = tag.createCompound("display");
-        display.putValue("MapColor", 0xFF0000);
-        sender.getInventory().addItem(item);
+        CommonItemStack item = CommonItemStack.of(MapDisplay.createMapItem(AttachmentEditor.class))
+                .setCustomNameMessage("Traincarts Attachments Editor")
+                .setFilledMapColor(0xFF0000);
+        sender.getInventory().addItem(item.toBukkit());
         sender.sendMessage(ChatColor.GREEN + "Given a Traincarts attachments editor");
     }
 
@@ -741,7 +748,7 @@ public class GlobalCommands {
                 }
 
                 // Check if train is loaded, or stored in a loaded world
-                if (!prop.hasHolder() && !OfflineGroupManager.containsInLoadedWorld(prop.getTrainName())) {
+                if (!prop.hasHolder() && !prop.getTrainCarts().getOfflineGroups().containsInLoadedWorld(prop.getTrainName())) {
                     continue;
                 }
 
@@ -799,11 +806,7 @@ public class GlobalCommands {
         }
 
         String safeEditName = StringUtil.stripChatStyle(name);
-        if (safeEditName.indexOf(' ') != -1) {
-            text.setClickableRunCommand("/train edit \"" + safeEditName + "\"");
-        } else {
-            text.setClickableRunCommand("/train edit " + safeEditName);
-        }
+        text.setClickableRunCommand("/train edit " + Util.escapeQuotedArgument(safeEditName));
         return text;
     }
 }

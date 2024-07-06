@@ -11,18 +11,15 @@ import com.bergerkiller.bukkit.common.map.widgets.MapWidgetButton;
 import com.bergerkiller.bukkit.common.map.widgets.MapWidgetText;
 import com.bergerkiller.bukkit.tc.TrainCarts;
 import com.bergerkiller.bukkit.tc.attachments.api.Attachment;
-import com.bergerkiller.bukkit.tc.attachments.api.AttachmentNameLookup;
 import com.bergerkiller.bukkit.tc.attachments.control.effect.midi.MidiChart;
 import com.bergerkiller.bukkit.tc.attachments.control.effect.midi.MidiChartParameters;
 import com.bergerkiller.bukkit.tc.attachments.control.effect.midi.MidiNote;
 import com.bergerkiller.bukkit.tc.attachments.control.effect.midi.MidiTimeSignature;
-import com.bergerkiller.bukkit.tc.attachments.ui.MapWidgetAttachmentNode;
 import com.bergerkiller.bukkit.tc.attachments.ui.MapWidgetMenu;
 import com.bergerkiller.bukkit.tc.attachments.ui.MapWidgetNumberBox;
 import com.bergerkiller.bukkit.tc.attachments.ui.MapWidgetTooltip;
 
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -35,7 +32,7 @@ import java.util.function.Function;
 public abstract class MidiChartDialog extends MapWidgetMenu {
     private static final MapTexture MIDI_BUTTON_ICONS = MapTexture.loadPluginResource(TrainCarts.plugin,
             "com/bergerkiller/bukkit/tc/textures/attachments/midi_buttons.png");
-    private MidiChart chart = MidiChart.bergersTune(); //MidiChart.empty();
+    private MidiChart chart = MidiChart.empty();
     private MidiChart selection = MidiChart.empty(chart.getParameters());
     private MidiChart pattern = MidiChart.empty(chart.getParameters());
     private EffectLoop.RunMode midiRunMode = EffectLoop.RunMode.ASYNCHRONOUS;
@@ -44,12 +41,12 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
     private TopMenuButton btnModeNote, btnModeSelect, btnModePattern;
     private TopMenuButton prevSelectedButton = null;
     private MidiPianoRollWidget pianoRoll;
+    private EffectLoop.Time duration = null; // If non-null, has an end time
 
     private volatile int previewCtr = 0;
     private volatile EffectLoop.Time currentPreviewTime = null; // Null if not playing
 
-    public MidiChartDialog(MapWidgetAttachmentNode attachment) {
-        this.setAttachment(attachment);
+    public MidiChartDialog() {
         this.setPositionAbsolute(true);
         this.setBounds(5, 5, 118, 116);
         this.setBackgroundColor(MapColorPalette.getColor(16, 16, 128));
@@ -63,12 +60,11 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
     public abstract void onChartChanged(MidiChart chart);
 
     /**
-     * Gets a lookup of the effect attachments for which this chart should be played when
-     * previewing the chart.
+     * Gets the Effect Sink used to preview the effects played by this MIDI chart
      *
-     * @return Preview effect attachments name groups
+     * @return Preview Effect Sink
      */
-    public abstract List<AttachmentNameLookup.NameGroup<Attachment.EffectAttachment>> getPreviewEffects();
+    public abstract Attachment.EffectSink getEffectSink();
 
     public MidiChartDialog setChart(MidiChart chart) {
         this.chart = chart;
@@ -78,6 +74,11 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
         if (this.pianoRoll != null) {
             this.pianoRoll.invalidate();
         }
+        return this;
+    }
+
+    public MidiChartDialog setDuration(EffectLoop.Time duration) {
+        this.duration = duration;
         return this;
     }
 
@@ -141,27 +142,28 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
         previewCtr++;
     }
 
-    private void preview(MidiChart chart, boolean shiftToStart) {
+    private void preview(MidiChart chart, boolean shiftToStart, boolean ignoreDuration) {
         stopPreview(); // Also increments preview ctr
 
         if (chart.isEmpty()) {
             return;
         }
 
-        // Gather the effect sinks
-        List<AttachmentNameLookup.NameGroup<Attachment.EffectAttachment>> effects = getPreviewEffects();
-        if (effects.isEmpty()) {
-            return;
-        }
-
         // Shift playback to the beginning
         chart = chart.clone();
         final EffectLoop.Time shifted = shiftToStart ? chart.timeShiftToStart() : EffectLoop.Time.ZERO;
-        final MidiEffectLoop effectLoop = new MidiEffectLoop();
+        final MidiScheduledEffectLoop midiEffectLoop = new MidiScheduledEffectLoop();
         final int previewId = previewCtr;
-        effectLoop.setChart(chart);
-        effectLoop.setEffects(effects);
+        midiEffectLoop.setChart(chart);
+        midiEffectLoop.setEffectSink(getEffectSink());
+
+        final ScheduledEffectLoop.SequentialEffectLoop effectLoop = midiEffectLoop.asEffectLoop();
         TrainCarts.plugin.createEffectLoopPlayer().play(effectLoop.withAdvance((base, dt, duration, loop) -> {
+            // If a duration limit was set, use it
+            if (MidiChartDialog.this.duration != null && !ignoreDuration) {
+                duration = MidiChartDialog.this.duration;
+            }
+
             // Abort older running loops
             if (previewId != previewCtr || !base.advance(dt, duration, loop)) {
                 currentPreviewTime = null; // Not playing
@@ -244,7 +246,7 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
                     stopPreview();
                     setPlaying(false);
                 } else {
-                    preview(chart, false);
+                    preview(chart, false, false);
                     setPlaying(true);
                 }
             }
@@ -377,24 +379,27 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
         public void onTick() {
             // Update the position of a vertical play line
             {
-                EffectLoop.Time time = currentPreviewTime;
-                int newVerticalLineX;
-                if (time == null) {
-                    newVerticalLineX = -1;
-                } else {
-                    long elapsed = time.nanos - chart.getParameters().getTimestampNanos(this.startTimeStepIndex);
-                    if (elapsed < 0) {
-                        newVerticalLineX = -1;
-                    } else {
-                        newVerticalLineX = 7 + (int) ((3 * elapsed) / chart.getParameters().timeStep().nanos);
-                        if (newVerticalLineX > getWidth()) {
-                            newVerticalLineX = -1;
-                        }
-                    }
-                }
+                int newVerticalLineX = calcChartXFromTime(currentPreviewTime);
                 if (newVerticalLineX != playVerticalLineX) {
                     playVerticalLineX = newVerticalLineX;
                     this.invalidate();
+                }
+            }
+        }
+
+        private int calcChartXFromTime(EffectLoop.Time time) {
+            if (time == null) {
+                return -1;
+            } else {
+                long elapsed = time.nanos - chart.getParameters().getTimestampNanos(this.startTimeStepIndex);
+                if (elapsed < 0) {
+                    return -1;
+                } else {
+                    int xPos = 7 + (int) ((3 * elapsed) / chart.getParameters().timeStep().nanos);
+                    if (xPos >= getWidth()) {
+                        return -1;
+                    }
+                    return xPos;
                 }
             }
         }
@@ -498,6 +503,15 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
                 view.drawLine(playVerticalLineX, 0, playVerticalLineX, getHeight() - 1,
                         MapColorPalette.COLOR_RED);
             }
+
+            // Draw a vertical line for the duration end point
+            if (duration != null) {
+                int durationVerticalLineX = calcChartXFromTime(duration);
+                if (durationVerticalLineX >= 0) {
+                    view.drawLine(durationVerticalLineX, 0, durationVerticalLineX, getHeight() - 1,
+                            MapColorPalette.COLOR_WHITE);
+                }
+            }
         }
 
         private void drawAllNotes(MidiChart chart, Function<MidiNote, MidiChartDialog.NoteColors> colorsFunc) {
@@ -552,14 +566,14 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
         NOTE(dialog -> { dialog.setNoteSelect(); dialog.pattern.clearNotes(); },
              dialog -> {
                  if (dialog.chart.toggleChartNotes(dialog.selection)) {
-                     dialog.preview(dialog.selection, true);
+                     dialog.preview(dialog.selection, true, true);
                  }
              }),
         /** Selects one or more notes (ghosts) for use as a pattern */
         SELECT(MidiChartDialog::setNoteSelect,
                dialog -> {
                    if (dialog.pattern.toggleChartNotes(dialog.selection)) {
-                       dialog.preview(dialog.pattern, true);
+                       dialog.preview(dialog.pattern, true, true);
                    } else {
                        dialog.stopPreview();
                    }
@@ -568,7 +582,7 @@ public abstract class MidiChartDialog extends MapWidgetMenu {
         PATTERN(MidiChartDialog::setPatternSelect,
                 dialog -> {
                     if (dialog.chart.toggleChartNotes(dialog.selection)) {
-                        dialog.preview(dialog.selection, true);
+                        dialog.preview(dialog.selection, true, true);
                     } else {
                         dialog.stopPreview();
                     }

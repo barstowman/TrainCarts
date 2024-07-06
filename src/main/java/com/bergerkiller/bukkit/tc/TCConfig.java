@@ -59,6 +59,7 @@ public class TCConfig {
     public static boolean useCoalFromStorageCart;
     public static boolean setOwnerOnPlacement;
     public static boolean keepChunksLoadedOnlyWhenMoving;
+    public static int maxKeepChunksLoadedRadius;
     public static int maxDetectorLength;
     public static int maxMutexSize;
     public static int maxMinecartStackSize;
@@ -117,7 +118,9 @@ public class TCConfig {
     public static int maxConcurrentEffectLoops = 20;
     public static double spawnSignCooldown = -1.0;
     public static int maxCartsPerWorld = -1;
+    public static int maxCartsPerTrain = -1;
     public static boolean maxCartsPerWorldCountUnloaded = false;
+    public static boolean modelSearchCompactFolders = true;
     public static String currencyFormat;
     public static Set<Material> allowedBlockBreakTypes = new HashSet<>();
     public static ConfiguredWorldSet enabledWorlds = new ConfiguredWorldSet();
@@ -139,6 +142,11 @@ public class TCConfig {
         config.addHeader("resourcePack", "Using 'default' or empty makes it use no resource pack at all");
         resourcePack = new MapResourcePack(config.get("resourcePack", "server"));
         resourcePack.load();
+
+        config.setHeader("modelSearchCompactFolders", "\nWhether to automatically unpack folders in the /train model search dialog");
+        config.addHeader("modelSearchCompactFolders", "If true, will show models in place of folders if there are few inside");
+        config.addHeader("modelSearchCompactFolders", "If false, will always show all folders, even if there's only one model inside");
+        modelSearchCompactFolders = config.get("modelSearchCompactFolders", true);
 
         // Legacy old 'normal' node, which used to exist because there was also one for 'angled'
         // Remove it and move the configuration properties to where they are now
@@ -251,6 +259,10 @@ public class TCConfig {
         config.setHeader("keepChunksLoadedOnlyWhenMoving", "\nWhether or not chunks are only kept loaded when the train is moving");
         config.addHeader("keepChunksLoadedOnlyWhenMoving", "They also keep chunks loaded while the train is waiting on a station");
         keepChunksLoadedOnlyWhenMoving = config.get("keepChunksLoadedOnlyWhenMoving", false);
+
+        config.setHeader("maxKeepChunksLoadedRadius", "\nMaximum radius that can be set for the keep chunks loaded property of a train");
+        config.addHeader("maxKeepChunksLoadedRadius", "The default is radius is 2, which loads a 5x5 chunk area. Avoid abuse, don't make it too big.");
+        maxKeepChunksLoadedRadius = config.get("maxKeepChunksLoadedRadius", 7);
 
         config.setHeader("enableCeilingBlockCollision", "\nWhether to enable or cancel collisions with blocks above minecarts");
         config.addHeader("enableCeilingBlockCollision", "Some constructions depend on these block collisions to block minecarts");
@@ -689,6 +701,12 @@ public class TCConfig {
 
             cartLimits.setHeader("countUnloaded", "\nWhether to include unloaded trains/carts in the maxCartsPerWorld limit");
             maxCartsPerWorldCountUnloaded = cartLimits.get("countUnloaded", false);
+
+            cartLimits.setHeader("maxCartsPerTrain", "Maximum number of carts that can be joined together in a train");
+            cartLimits.addHeader("maxCartsPerTrain", "Linking does not happen when it would exceed this limit,");
+            cartLimits.addHeader("maxCartsPerTrain", "and trains longer than this cannot be spawned");
+            cartLimits.addHeader("maxCartsPerTrain", "A value of -1 disables this limit, allowing any length (default)");
+            maxCartsPerTrain = cartLimits.get("maxCartsPerTrain", -1);
         }
     }
 

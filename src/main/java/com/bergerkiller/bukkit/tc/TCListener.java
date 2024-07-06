@@ -8,6 +8,7 @@ import com.bergerkiller.bukkit.common.entity.CommonEntity;
 import com.bergerkiller.bukkit.common.events.ChunkLoadEntitiesEvent;
 import com.bergerkiller.bukkit.common.events.EntityAddEvent;
 import com.bergerkiller.bukkit.common.events.EntityRemoveFromServerEvent;
+import com.bergerkiller.bukkit.common.inventory.CommonItemStack;
 import com.bergerkiller.bukkit.common.offline.OfflineBlock;
 import com.bergerkiller.bukkit.common.protocol.CommonPacket;
 import com.bergerkiller.bukkit.common.protocol.PacketType;
@@ -28,15 +29,13 @@ import com.bergerkiller.bukkit.tc.portals.PortalDestination;
 import com.bergerkiller.bukkit.tc.rails.RailLookup;
 import com.bergerkiller.bukkit.tc.rails.type.RailType;
 import com.bergerkiller.bukkit.tc.signactions.SignAction;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroup;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroupManager;
+import com.bergerkiller.bukkit.tc.offline.train.OfflineGroup;
 import com.bergerkiller.bukkit.tc.utils.TrackMap;
 import com.bergerkiller.generated.net.minecraft.world.entity.EntityHandle;
 
 import static com.bergerkiller.bukkit.common.utils.MaterialUtil.getMaterial;
 
 import org.bukkit.Bukkit;
-import org.bukkit.Chunk;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -53,6 +52,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.*;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityPortalEvent;
 import org.bukkit.event.entity.ItemSpawnEvent;
@@ -118,57 +118,21 @@ public class TCListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onChunkUnload(ChunkUnloadEvent event) {
-        // This chunk is still referenced, ensure that it is really gone
-        long chunkCoordLong = MathUtil.longHashToLong(event.getChunk().getX(), event.getChunk().getZ());
-        OfflineGroupManager.lastUnloadChunk = Long.valueOf(chunkCoordLong);
-
-        // Check no trains are keeping the chunk loaded
-        World chunkWorld = event.getWorld();
-        for (MinecartGroup group : MinecartGroup.getGroups().cloneAsIterable()) {
-            if (group.isInChunk(chunkWorld, chunkCoordLong)) {
-                unloadChunkForGroup(group, event.getChunk());
-            }
-        }
-
-        // Double-check
-        for (Entity entity : WorldUtil.getEntities(event.getChunk())) {
-            if (entity instanceof Minecart) {
-                MinecartMember<?> member = MinecartMemberStore.getFromEntity(entity);
-                if (member == null || !member.isInteractable()) {
-                    continue;
-                }
-                unloadChunkForGroup(member.getGroup(), event.getChunk());
-            }
-        }
-
-        OfflineGroupManager.unloadChunk(event.getChunk());
-        OfflineGroupManager.lastUnloadChunk = null;
-    }
-
-    private void unloadChunkForGroup(MinecartGroup group, Chunk chunk) {
-        if (group.canUnload()) {
-            group.unload();
-        } else if (group.getChunkArea().containsChunk(chunk.getX(), chunk.getZ()))  {
-            plugin.log(Level.SEVERE, "Chunk " + chunk.getX() + "/" + chunk.getZ() +
-                    " of group " + group.getProperties().getTrainName() + " unloaded unexpectedly!");
-        } else {
-            plugin.log(Level.SEVERE, "Chunk " + chunk.getX() + "/" + chunk.getZ() +
-                    " of group " + group.getProperties().getTrainName() + " unloaded because chunk area wasn't up to date!");
-        }
+        plugin.getOfflineGroups().unloadChunk(event.getChunk());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onChunkLoadEntities(ChunkLoadEntitiesEvent event) {
-        OfflineGroupManager.loadChunk(plugin, event.getChunk());
+        plugin.getOfflineGroups().loadChunk(event.getChunk());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onWorldLoad(WorldLoadEvent event) {
         // Refresh the groups on this world
-        OfflineGroupManager.refresh(plugin, event.getWorld());
+        plugin.getOfflineGroups().refresh(event.getWorld());
 
         // Start loading the chunks kept loaded by trains with property keep chunks loaded
-        Map<OfflineGroup, List<ForcedChunk>> chunks = OfflineGroupManager.getForceLoadedChunks(event.getWorld());
+        Map<OfflineGroup, List<ForcedChunk>> chunks = plugin.getOfflineGroups().getForceLoadedChunks(event.getWorld());
         if (!chunks.isEmpty()) {
             plugin.log(Level.INFO, "Restoring trains and loading nearby chunks on world " + event.getWorld().getName() + "...");
             plugin.preloadChunks(chunks);
@@ -177,7 +141,7 @@ public class TCListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onWorldUnload(WorldUnloadEvent event) {
-        OfflineGroupManager.unloadWorld(event.getWorld());
+        plugin.getOfflineGroups().unloadWorld(event.getWorld());
         if (Bukkit.getPluginManager().isPluginEnabled("LightAPI")) {
             disableLightAPIWorld(event.getWorld());
         }
@@ -228,7 +192,7 @@ public class TCListener implements Listener {
             }
 
             if (EntityHandle.fromBukkit(event.getEntity()).isDestroyed()) {
-                OfflineGroupManager.removeMember(entityUUID);
+                plugin.getOfflineGroups().removeMember(entityUUID);
             } else {
                 MinecartMember<?> member = MinecartMemberStore.getFromEntity(event.getEntity());
                 if (member == null) {
@@ -250,7 +214,7 @@ public class TCListener implements Listener {
                 // For the next tick: update the storage system to restore trains here and there
                 CommonUtil.nextTick(new Runnable() {
                     public void run() {
-                        OfflineGroupManager.refresh(plugin);
+                        plugin.getOfflineGroups().refresh();
                     }
                 });
             }
@@ -258,27 +222,40 @@ public class TCListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onVehicleDamage(VehicleDamageEvent event) {
-        MinecartMember<?> mm = MinecartMemberStore.getFromEntity(event.getVehicle());
-        if (mm == null) {
-            return;
+    public void onVehicleDamageByEntity(EntityDamageByEntityEvent event) {
+        if (isCartDamageCancelled(event.getEntity(), event.getDamager())) {
+            event.setCancelled(true);
         }
-        Entity attacker = event.getAttacker();
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onVehicleDamage(VehicleDamageEvent event) {
+        if (isCartDamageCancelled(event.getVehicle(), event.getAttacker())) {
+            event.setCancelled(true);
+        }
+    }
+
+    private boolean isCartDamageCancelled(Entity vehicle, Entity attacker) {
+        MinecartMember<?> mm = MinecartMemberStore.getFromEntity(vehicle);
+        if (mm == null) {
+            return false;
+        }
         if (attacker instanceof Projectile) {
             attacker = (Entity) ((Projectile) attacker).getShooter();
         }
 
         boolean breakAny = ((attacker instanceof Player) && Permission.BREAK_MINECART_ANY.has((Player) attacker));
         if (mm.getProperties().isInvincible() && !breakAny) {
-            event.setCancelled(true);
-            return;
+            return true;
         }
         if (attacker instanceof Player) {
             Player p = (Player) attacker;
             if (!breakAny && (!mm.getProperties().hasOwnership(p) || !Permission.BREAK_MINECART_SELF.has(p))) {
-                event.setCancelled(true);
+                return true;
             }
         }
+
+        return false;
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
@@ -318,7 +295,9 @@ public class TCListener implements Listener {
         // Map control: select the clicked block
         if (TCMapControl.isTCMapItem(event.getItem())) {
             if (event.getClickedBlock() != null) {
-                ItemUtil.getMetaTag(event.getItem()).putBlockLocation("selected", new BlockLocation(event.getClickedBlock()));
+                CommonItemStack.of(event.getItem()).updateCustomData(tag -> {
+                    tag.putBlockLocation("selected", new BlockLocation(event.getClickedBlock()));
+                });
             }
 
             TCMapControl.updateMapItem(event.getPlayer(), true);

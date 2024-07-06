@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 
+import com.bergerkiller.bukkit.tc.properties.api.IStringSetProperty;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 
@@ -21,16 +22,15 @@ import com.bergerkiller.bukkit.tc.properties.api.PropertyCheckPermission;
 import com.bergerkiller.bukkit.tc.properties.api.PropertyParser;
 import com.bergerkiller.bukkit.tc.properties.api.context.PropertyParseContext;
 import com.bergerkiller.bukkit.tc.properties.standard.fieldbacked.FieldBackedStandardCartProperty;
-
-import cloud.commandframework.annotations.Argument;
-import cloud.commandframework.annotations.CommandDescription;
-import cloud.commandframework.annotations.CommandMethod;
-import cloud.commandframework.annotations.specifier.FlagYielding;
+import org.incendo.cloud.annotation.specifier.FlagYielding;
+import org.incendo.cloud.annotations.Argument;
+import org.incendo.cloud.annotations.Command;
+import org.incendo.cloud.annotations.CommandDescription;
 
 /**
  * Set of permission names which players need to modify a cart
  */
-public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Set<String>> {
+public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Set<String>> implements IStringSetProperty {
 
     /**
      * Appends owner permission details of a cart or train to
@@ -50,7 +50,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
         }
     }
 
-    @CommandMethod("cart owners permission")
+    @Command("cart owners permission")
     @CommandDescription("Display the owner permissions set for a cart")
     private void getProperty(
             final CommandSender sender,
@@ -63,7 +63,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
 
     @CommandTargetTrain
     @PropertyCheckPermission("ownerperms")
-    @CommandMethod("cart owners permission add <permissions>")
+    @Command("cart owners permission add <permissions>")
     @CommandDescription("Adds permissions players need to access a cart")
     private void setPropertyAdd(
             final CommandSender sender,
@@ -82,7 +82,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
 
     @CommandTargetTrain
     @PropertyCheckPermission("ownerperms")
-    @CommandMethod("cart owners permission remove <permissions>")
+    @Command("cart owners permission remove <permissions>")
     @CommandDescription("Removes permissions players need to access a cart")
     private void setPropertyRemove(
             final CommandSender sender,
@@ -101,7 +101,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
 
     @CommandTargetTrain
     @PropertyCheckPermission("ownerperms")
-    @CommandMethod("cart owners permission set <permissions>")
+    @Command("cart owners permission set <permissions>")
     @CommandDescription("Discards previous owner permissions and sets new permissions players need to access a cart")
     private void setProperty(
             final CommandSender sender,
@@ -121,7 +121,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
     }
 
     @PropertyCheckPermission("ownerperms")
-    @CommandMethod("cart owners permission clear")
+    @Command("cart owners permission clear")
     @CommandDescription("Clears all owner permissions set for a cart")
     private void setPropertyClear(
             final CommandSender sender,
@@ -131,7 +131,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
         sender.sendMessage(ChatColor.GREEN + "Permission rules cleared.");
     }
 
-    @CommandMethod("train owners permission")
+    @Command("train owners permission")
     @CommandDescription("Display the owner permissions set for a train")
     private void getProperty(
             final CommandSender sender,
@@ -144,7 +144,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
 
     @CommandTargetTrain
     @PropertyCheckPermission("ownerperms")
-    @CommandMethod("train owners permission add <permissions>")
+    @Command("train owners permission add <permissions>")
     @CommandDescription("Adds permissions players need to access a cart")
     private void setPropertyAdd(
             final CommandSender sender,
@@ -163,7 +163,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
 
     @CommandTargetTrain
     @PropertyCheckPermission("ownerperms")
-    @CommandMethod("train owners permission remove <permissions>")
+    @Command("train owners permission remove <permissions>")
     @CommandDescription("Removes permissions players need to access a cart")
     private void setPropertyRemove(
             final CommandSender sender,
@@ -182,7 +182,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
 
     @CommandTargetTrain
     @PropertyCheckPermission("ownerperms")
-    @CommandMethod("train owners permission set <permissions>")
+    @Command("train owners permission set <permissions>")
     @CommandDescription("Discards previous owner permissions and sets new permissions players need to access a train")
     private void setProperty(
             final CommandSender sender,
@@ -202,7 +202,7 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
     }
 
     @PropertyCheckPermission("ownerperms")
-    @CommandMethod("train owners permission clear")
+    @Command("train owners permission clear")
     @CommandDescription("Clears all owner permissions set for a train")
     private void setPropertyClear(
             final CommandSender sender,
@@ -255,6 +255,11 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
     }
 
     @Override
+    public String getListedName() {
+        return "owner perms";
+    }
+
+    @Override
     public Set<String> getData(CartInternalData data) {
         return data.ownerPermissions;
     }
@@ -276,6 +281,6 @@ public final class OwnerPermissionSet extends FieldBackedStandardCartProperty<Se
 
     @Override
     public Set<String> get(TrainProperties properties) {
-        return FieldBackedStandardCartProperty.combineCartValues(properties, this);
+        return TrainInternalData.get(properties).ownerPermissions.update(properties, this);
     }
 }

@@ -312,7 +312,7 @@ public interface Attachment extends AttachmentNameLookup.Supplier {
      */
     default void addChild(Attachment child) {
         this.getInternalState().children.add(child);
-        child.getInternalState().parent = this;
+        child.getInternalState().assignParent(child, this);
     }
 
     /**
@@ -324,7 +324,7 @@ public interface Attachment extends AttachmentNameLookup.Supplier {
      */
     default void addChild(int index, Attachment child) {
         this.getInternalState().children.add(index, child);
-        child.getInternalState().parent = this;
+        child.getInternalState().assignParent(child, this);
     }
 
     /**
@@ -336,7 +336,7 @@ public interface Attachment extends AttachmentNameLookup.Supplier {
      */
     default boolean removeChild(Attachment child) {
         if (this.getInternalState().children.remove(child)) {
-            child.getInternalState().parent = null;
+            child.getInternalState().makeNewSubtree(child);
             return true;
         } else {
             return false;
@@ -368,6 +368,17 @@ public interface Attachment extends AttachmentNameLookup.Supplier {
         return getManager().getNameLookup(this);
     }
 
+    @Override
+    default AttachmentNameLookup getNameLookup(AttachmentSelector.SearchStrategy strategy) {
+        return (strategy == AttachmentSelector.SearchStrategy.ROOT_CHILDREN)
+                ? getRootParent().getNameLookup() : getNameLookup();
+    }
+
+    @Override
+    default Set<Attachment> getSelfFilterOfNameLookup() {
+        return Collections.singleton(this);
+    }
+
     /**
      * Gets the parent controller of this controller, if one is available.
      * 
@@ -375,6 +386,16 @@ public interface Attachment extends AttachmentNameLookup.Supplier {
      */
     default Attachment getParent() {
         return this.getInternalState().parent;
+    }
+
+    /**
+     * Gets the root parent of this attachment. This is the same as calling
+     * {@link #getParent()} recursively until no more parent remains.
+     *
+     * @return Root parent controller
+     */
+    default Attachment getRootParent() {
+        return this.getInternalState().rootParent;
     }
 
     /**
@@ -668,6 +689,76 @@ public interface Attachment extends AttachmentNameLookup.Supplier {
     }
 
     /**
+     * A sink for playing (or stopping playback of) effects. Effect attachments
+     * are sinks.
+     */
+    interface EffectSink {
+        EffectSink DISABLED_EFFECT_SINK = new EffectSink() {
+            @Override
+            public void playEffect(EffectAttachment.EffectOptions options) {
+            }
+
+            @Override
+            public void stopEffect() {
+            }
+        };
+
+        /**
+         * Plays the effect. Is possibly called asynchronously, so the implementation must ensure the
+         * operation is thread-safe.
+         *
+         * @param options Options that change how the effect is played
+         */
+        void playEffect(EffectAttachment.EffectOptions options);
+
+        /**
+         * Stops playing this effect, if possible. Is possibly called asynchronously, so the implementation
+         * must ensure the operation is thread-safe.
+         */
+        void stopEffect();
+
+        /**
+         * Forwards effect play and stop instructions to a named group of effect attachments
+         *
+         * @param effectAttachments Named group of effect attachments
+         * @return Sink forwarding play/stop to this named group
+         */
+        static EffectSink combineEffects(Iterable<? extends Attachment.EffectAttachment> effectAttachments) {
+            return new EffectSink() {
+                @Override
+                public void playEffect(EffectAttachment.EffectOptions options) {
+                    effectAttachments.forEach(e -> e.playEffect(options));
+                }
+
+                @Override
+                public void stopEffect() {
+                    effectAttachments.forEach(EffectAttachment::stopEffect);
+                }
+            };
+        }
+
+        /**
+         * Forwards effect play and stop instructions to a collection of named groups of effect attachments
+         *
+         * @param effectAttachments Collection of named groups of effect attachments
+         * @return Sink forwarding play/stop to these named groups
+         */
+        static EffectSink combineEffects(Collection<Iterable<? extends Attachment.EffectAttachment>> effectAttachments) {
+            return new EffectSink() {
+                @Override
+                public void playEffect(EffectAttachment.EffectOptions options) {
+                    effectAttachments.forEach(n -> n.forEach(e -> e.playEffect(options)));
+                }
+
+                @Override
+                public void stopEffect() {
+                    effectAttachments.forEach(n -> n.forEach(EffectAttachment::stopEffect));
+                }
+            };
+        }
+    }
+
+    /**
      * A type of attachment that produces some sort of effect. An effect can be
      * sound, particles or some other thing triggered through packets.<br>
      * <br>
@@ -685,20 +776,12 @@ public interface Attachment extends AttachmentNameLookup.Supplier {
      *     <li>The volume of the effect</li>
      * </ul>
      */
-    interface EffectAttachment extends Attachment {
+    interface EffectAttachment extends Attachment, EffectSink {
 
-        /**
-         * Plays the effect. Is possibly called asynchronously, so the implementation must ensure the
-         * operation is thread-safe.
-         *
-         * @param options Options that change how the effect is played
-         */
+        @Override
         void playEffect(EffectOptions options);
 
-        /**
-         * Stops playing this effect, if possible. Is possibly called asynchronously, so the implementation
-         * must ensure the operation is thread-safe.
-         */
+        @Override
         void stopEffect();
 
         /**
@@ -752,6 +835,17 @@ public interface Attachment extends AttachmentNameLookup.Supplier {
              */
             public EffectOptions withSpeed(double newSpeed) {
                 return new EffectOptions(this.volume, newSpeed);
+            }
+
+            /**
+             * Multiplies volume and speed with a multiplier
+             *
+             * @param multVolume Volume multiplier
+             * @param multSpeed Speed multiplier
+             * @return Updated EffectOptions
+             */
+            public EffectOptions multiply(double multVolume, double multSpeed) {
+                return new EffectOptions(this.volume * multVolume, this.speed * multSpeed);
             }
 
             /**

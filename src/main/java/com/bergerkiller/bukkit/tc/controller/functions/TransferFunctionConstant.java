@@ -4,8 +4,11 @@ import com.bergerkiller.bukkit.common.config.ConfigurationNode;
 import com.bergerkiller.bukkit.common.map.MapCanvas;
 import com.bergerkiller.bukkit.common.map.MapColorPalette;
 import com.bergerkiller.bukkit.common.map.MapFont;
+import com.bergerkiller.bukkit.tc.Util;
 import com.bergerkiller.bukkit.tc.attachments.ui.MapWidgetNumberBox;
-import com.bergerkiller.bukkit.tc.attachments.ui.functions.MapWidgetTransferFunctionItem;
+import com.bergerkiller.bukkit.tc.controller.functions.ui.MapWidgetTransferFunctionItem;
+
+import java.text.NumberFormat;
 
 /**
  * A transfer function that always returns the same constant value
@@ -24,7 +27,7 @@ public final class TransferFunctionConstant implements TransferFunction {
 
         @Override
         public TransferFunctionConstant createNew(TransferFunctionHost host) {
-            return new TransferFunctionConstant();
+            return zero();
         }
 
         @Override
@@ -38,14 +41,19 @@ public final class TransferFunctionConstant implements TransferFunction {
             config.set("output", function.output);
         }
     };
+    private static final NumberFormat PREVIEW_NUM_FORMAT = Util.createNumberFormat(1, 5);
 
     private double output;
 
-    public TransferFunctionConstant() {
-        this(0.0);
+    public static TransferFunctionConstant zero() {
+        return new TransferFunctionConstant(0.0);
     }
 
-    public TransferFunctionConstant(double output) {
+    public static TransferFunctionConstant of(double output) {
+        return new TransferFunctionConstant(output);
+    }
+
+    private TransferFunctionConstant(double output) {
         this.output = output;
     }
 
@@ -80,7 +88,7 @@ public final class TransferFunctionConstant implements TransferFunction {
     @Override
     public void drawPreview(MapWidgetTransferFunctionItem widget, MapCanvas view) {
         view.draw(MapFont.MINECRAFT, 0, 3, widget.defaultColor(MapColorPalette.COLOR_GREEN),
-                Double.toString(output));
+                PREVIEW_NUM_FORMAT.format(output));
     }
 
     @Override

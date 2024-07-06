@@ -12,7 +12,7 @@ import com.bergerkiller.bukkit.tc.events.GroupLinkEvent;
 import com.bergerkiller.bukkit.tc.properties.TrainProperties;
 import com.bergerkiller.bukkit.tc.properties.TrainPropertiesStore;
 
-import com.bergerkiller.bukkit.tc.storage.OfflineGroupManager;
+import com.bergerkiller.bukkit.tc.offline.train.OfflineGroupManager;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
@@ -166,6 +166,8 @@ public class MinecartGroupStore extends ArrayList<MinecartMember<?>> {
             return false;
         }
 
+        final TrainCarts traincarts = TrainCarts.plugin;
+
         int countSpawned = 0;
         try (ImplicitlySharedSet<MinecartGroup> groups_copy = groups.clone()) {
             for (MinecartGroup group : groups_copy) {
@@ -175,7 +177,7 @@ public class MinecartGroupStore extends ArrayList<MinecartMember<?>> {
             }
         }
         if (TCConfig.maxCartsPerWorldCountUnloaded) {
-            countSpawned += OfflineGroupManager.getStoredMemberCount(at.getWorld());
+            countSpawned += traincarts.getOfflineGroups().getStoredMemberCount(at.getWorld());
         }
         if ((countSpawned + numberOfCartsToSpawn) <= TCConfig.maxCartsPerWorld) {
             return false;
@@ -184,7 +186,7 @@ public class MinecartGroupStore extends ArrayList<MinecartMember<?>> {
         // Exceeds the limit. Write this to the server log with a 30-second cooldown to avoid log spam
         long now = System.currentTimeMillis();
         if (lastMaxPerWorldLogTimestamp == 0 || ((now - lastMaxPerWorldLogTimestamp) > 30000)) {
-            TrainCarts.plugin.getLogger().warning("Could not spawn " + numberOfCartsToSpawn + " carts in world '" +
+            traincarts.getLogger().warning("Could not spawn " + numberOfCartsToSpawn + " carts in world '" +
                     at.getWorld().getName() + "' at x=" + at.getBlockX() + " y=" + at.getBlockY() + " z=" + at.getBlockZ() +
                     " because it exceeds limit " +
                     "(" + (countSpawned + numberOfCartsToSpawn) + "/" + TCConfig.maxCartsPerWorld + ")");
@@ -300,6 +302,12 @@ public class MinecartGroupStore extends ArrayList<MinecartMember<?>> {
             if (m1.isDerailed() || m2.isDerailed()) {
                 return false;
             }
+
+            //Would the resulting train be too long?
+            if (TCConfig.maxCartsPerTrain >= 0 && (g1.size() + g2.size()) > TCConfig.maxCartsPerTrain) {
+                return false;
+            }
+
             //Can the two groups bind?
             TrainProperties prop1 = g1.getProperties();
             TrainProperties prop2 = g2.getProperties();

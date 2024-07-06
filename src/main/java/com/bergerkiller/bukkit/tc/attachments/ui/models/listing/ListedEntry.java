@@ -9,7 +9,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import org.bukkit.inventory.ItemStack;
+import com.bergerkiller.bukkit.common.inventory.CommonItemStack;
 
 import com.bergerkiller.bukkit.common.utils.StringUtil;
 
@@ -36,7 +36,7 @@ public abstract class ListedEntry implements Comparable<ListedEntry> {
      * @param options Dialog Options
      * @return Icon to display
      */
-    public abstract ItemStack createIconItem(DialogBuilder options);
+    public abstract CommonItemStack createIconItem(DialogBuilder options);
 
     /**
      * Gets the name of this entry. The entry is sorted alphabetically based
@@ -246,6 +246,17 @@ public abstract class ListedEntry implements Comparable<ListedEntry> {
     }
 
     /**
+     * Tries to compact this item, if this item contains only a single item model.
+     * Only compacts if the condition is true, otherwise returns this listed entry
+     *
+     * @param condition Whether to compact
+     * @return the one item model entry, or this
+     */
+    public final ListedEntry compactIf(boolean condition) {
+        return condition ? this.compact() : this;
+    }
+
+    /**
      * Tries to compact this item, if this item contains only a single item model
      *
      * @return the one item model entry, or this
@@ -273,6 +284,27 @@ public abstract class ListedEntry implements Comparable<ListedEntry> {
      * @return displayed items
      */
     public final List<? extends ListedEntry> displayedItems(int numDisplayed) {
+        return displayedItems(numDisplayed, true);
+    }
+
+    /**
+     * Generates a List of entries that should be displayed when this entry is being
+     * displayed. By default will list all direct children, but if there's less items
+     * than the limit specified, will unpack one or more children to fill the space.<br>
+     * <br>
+     * Might return more than the number to be displayed, in which case pagination should
+     * be used to properly render it.
+     *
+     * @param numDisplayed Maximum number of entries that are displayed at one time
+     * @param compact Whether to compact listed entries if they contain too few models inside
+     * @return displayed items
+     */
+    public final List<? extends ListedEntry> displayedItems(int numDisplayed, boolean compact) {
+        // If not compacted, show all entries of this entry as-is
+        if (!compact) {
+            return this.children();
+        }
+
         int numChildren = children().size();
 
         // If there are more children than can be displayed, add every child to the list

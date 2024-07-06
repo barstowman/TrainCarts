@@ -7,6 +7,7 @@ import com.bergerkiller.bukkit.common.chunk.ForcedChunk;
 import com.bergerkiller.bukkit.common.collections.ImplicitlySharedSet;
 import com.bergerkiller.bukkit.common.config.FileConfiguration;
 import com.bergerkiller.bukkit.common.controller.DefaultEntityController;
+import com.bergerkiller.bukkit.common.conversion.type.HandleConversion;
 import com.bergerkiller.bukkit.common.entity.CommonEntity;
 import com.bergerkiller.bukkit.common.internal.legacy.MaterialsByName;
 import com.bergerkiller.bukkit.common.inventory.ItemParser;
@@ -19,6 +20,8 @@ import com.bergerkiller.bukkit.neznamytabnametaghider.TabNameTagHider;
 import com.bergerkiller.bukkit.neznamytabnametaghider.TabNameTagHiderDependency;
 import com.bergerkiller.bukkit.sl.API.Variables;
 import com.bergerkiller.bukkit.common.softdependency.SoftDependency;
+import com.bergerkiller.bukkit.tc.actions.Action;
+import com.bergerkiller.bukkit.tc.actions.registry.ActionRegistry;
 import com.bergerkiller.bukkit.tc.attachments.FakePlayerSpawner;
 import com.bergerkiller.bukkit.tc.attachments.api.AttachmentTypeRegistry;
 import com.bergerkiller.bukkit.tc.attachments.config.SavedAttachmentModelStore;
@@ -58,6 +61,7 @@ import com.bergerkiller.bukkit.tc.properties.standard.StandardProperties;
 import com.bergerkiller.bukkit.tc.properties.standard.category.PaperPlayerViewDistanceProperty;
 import com.bergerkiller.bukkit.tc.properties.standard.category.PaperTrackingRangeProperty;
 import com.bergerkiller.bukkit.tc.rails.RailLookup;
+import com.bergerkiller.bukkit.tc.rails.TrackedSignLookup;
 import com.bergerkiller.bukkit.tc.rails.type.RailType;
 import com.bergerkiller.bukkit.tc.signactions.SignAction;
 import com.bergerkiller.bukkit.tc.signactions.SignActionDetector;
@@ -65,10 +69,11 @@ import com.bergerkiller.bukkit.tc.signactions.SignActionSpawn;
 import com.bergerkiller.bukkit.tc.signactions.mutex.MutexZoneCache;
 import com.bergerkiller.bukkit.tc.signactions.spawner.SpawnSignManager;
 import com.bergerkiller.bukkit.tc.statements.Statement;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroup;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroupManager;
+import com.bergerkiller.bukkit.tc.offline.train.OfflineGroup;
+import com.bergerkiller.bukkit.tc.offline.train.OfflineGroupManager;
 import com.bergerkiller.bukkit.tc.tickets.TicketStore;
 import com.bergerkiller.bukkit.tc.utils.BlockPhysicsEventDataAccessor;
+import com.bergerkiller.generated.net.minecraft.world.item.ItemHandle;
 import com.bergerkiller.mountiplex.conversion.Conversion;
 
 import me.m56738.smoothcoasters.api.SmoothCoastersAPI;
@@ -83,6 +88,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Minecart;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -101,6 +107,7 @@ public class TrainCarts extends PluginBase {
     private TCPropertyRegistry propertyRegistry;
     private TCListener listener;
     private TCPacketListener packetListener;
+    private TCSuppressSeatTeleportPacketListener suppressSeatTeleportPacketListener;
     private TCInteractionPacketListener interactionPacketListener;
     private FileConfiguration config;
     private final SpawnSignManager spawnSignManager = new SpawnSignManager(this);
@@ -113,7 +120,10 @@ public class TrainCarts extends PluginBase {
     private TrainLocator trainLocator;
     private TrainUpdateController trainUpdateController = new TrainUpdateController(this);
     private final TCSelectorHandlerRegistry selectorHandlerRegistry = new TCSelectorHandlerRegistry(this);
+    private final OfflineGroupManager offlineGroupManager = new OfflineGroupManager(this);
     private final OfflineSignStore offlineSignStore = new OfflineSignStore(this);
+    private final ActionRegistry actionRegistry = new ActionRegistry(this);
+    private final TrackedSignLookup trackedSignLookup = new TrackedSignLookup(this);
     private final SignController signController = new SignController(this);
     private final PacketQueueMap packetQueueMap = new PacketQueueMap(this);
     private ResourcePackModelListing modelListing = new ResourcePackModelListing(); // Uninitialized
@@ -309,6 +319,15 @@ public class TrainCarts extends PluginBase {
     }
 
     /**
+     * Gets the information about all train groups and member that have unloaded
+     *
+     * @return offline group manager
+     */
+    public OfflineGroupManager getOfflineGroups() {
+        return this.offlineGroupManager;
+    }
+
+    /**
      * Gets the offline sign store, where metadata of signs can be stored
      * persistently
      *
@@ -316,6 +335,28 @@ public class TrainCarts extends PluginBase {
      */
     public OfflineSignStore getOfflineSigns() {
         return this.offlineSignStore;
+    }
+
+    /**
+     * Gets the tracked sign lookup register. This is the bridge between a serialized
+     * sign unique key and the live tracked sign it represents. Plugins can register
+     * their custom sign implementations here, making metadata mapped ot them
+     * persistent.
+     *
+     * @return Tracked Sign lookup
+     */
+    public TrackedSignLookup getTrackedSignLookup() {
+        return trackedSignLookup;
+    }
+
+    /**
+     * Gets the action registry. This registry contains all the {@link Action} types
+     * that are persistent. Actions that survive a train reload are registered here.
+     *
+     * @return Action Registry
+     */
+    public ActionRegistry getActionRegistry() {
+        return actionRegistry;
     }
 
     /**
@@ -736,7 +777,8 @@ public class TrainCarts extends PluginBase {
         if (TCConfig.maxMinecartStackSize != 1) {
             for (Material material : MaterialsByName.getAllMaterials()) {
                 if (MaterialUtil.ISMINECART.get(material)) {
-                    Util.setItemMaxSize(material, TCConfig.maxMinecartStackSize);
+                    ItemHandle.createHandle(HandleConversion.toItemHandle(material))
+                            .setMaxStackSize(TCConfig.maxMinecartStackSize);
                 }
             }
         }
@@ -797,7 +839,7 @@ public class TrainCarts extends PluginBase {
                 "savedTrainModules");
 
         //Load groups
-        OfflineGroupManager.init(this, getDataFolder() + File.separator + "trains.groupdata");
+        offlineGroupManager.load();
 
         //Convert Minecarts
         MinecartMemberStore.convertAllAutomatically(this);
@@ -807,6 +849,9 @@ public class TrainCarts extends PluginBase {
 
         // Cleans up unused cached rail types over time to avoid memory leaks
         cacheCleanupTask = new CacheCleanupTask(this).start(1, 1);
+
+        // Clean up the cache right now, so that all rails are recalculated
+        RailLookup.forceRecalculation();
 
         // Refreshes mutex signs with trains on it to release state again
         mutexZoneUpdateTask = new MutexZoneUpdateTask(this).start(1, 1);
@@ -830,14 +875,21 @@ public class TrainCarts extends PluginBase {
         this.register(new TCSeatChangeListener());
         this.register(new TrainChestListener(this));
 
+        // Only registered when needed...
+        if (TCSuppressSeatTeleportPacketListener.SUPPRESS_POST_ENTER_PLAYER_POSITION_PACKET) {
+            suppressSeatTeleportPacketListener = new TCSuppressSeatTeleportPacketListener(this);
+            this.register((PacketListener) suppressSeatTeleportPacketListener, TCSuppressSeatTeleportPacketListener.LISTENED_TYPES);
+            this.register((Listener) suppressSeatTeleportPacketListener);
+        }
+
         //Restore carts where possible
         log(Level.INFO, "Restoring trains and loading nearby chunks...");
         {
             // Check chunks that are already loaded first
-            OfflineGroupManager.refresh(this);
+            offlineGroupManager.refresh();
 
             // Get all chunks to be kept loaded and load them right now
-            preloadChunks(OfflineGroupManager.getForceLoadedChunks());
+            preloadChunks(offlineGroupManager.getForceLoadedChunks());
         }
 
         //Activate all detector regions with trains that are on it
@@ -865,7 +917,7 @@ public class TrainCarts extends PluginBase {
 
         // Destroy all trains after initializing if specified
         if (TCConfig.destroyAllOnShutdown) {
-            OfflineGroupManager.destroyAllAsync(false).thenAccept(count -> {
+            offlineGroupManager.destroyAllAsync(false).thenAccept(count -> {
                 getLogger().info("[DestroyOnShutdown] Destroyed " + count + " trains");
             });
         }
@@ -968,7 +1020,8 @@ public class TrainCarts extends PluginBase {
         if (TCConfig.maxMinecartStackSize != 1) {
             for (Material material : MaterialsByName.getAllMaterials()) {
                 if (MaterialUtil.ISMINECART.get(material)) {
-                    Util.setItemMaxSize(material, 1);
+                    ItemHandle.createHandle(HandleConversion.toItemHandle(material))
+                            .setMaxStackSize(1);
                 }
             }
         }
@@ -1040,7 +1093,7 @@ public class TrainCarts extends PluginBase {
         }
 
         //save all data to disk (autosave=false)
-        save(false);
+        save(SaveMode.SHUTDOWN);
 
         // Disable path provider before de-initializing path nodes / sign actions
         if (this.pathProvider != null) {
@@ -1054,7 +1107,7 @@ public class TrainCarts extends PluginBase {
         Statement.deinit();
         SignAction.deinit();
         ItemAnimation.deinit();
-        OfflineGroupManager.deinit();
+        offlineGroupManager.deinit();
         RailLookup.clear();
         this.signController.disable();
 
@@ -1099,8 +1152,12 @@ public class TrainCarts extends PluginBase {
 
     /**
      * Saves all traincarts related information to file
+     *
+     * @param saveMode Mode of saving
      */
-    public void save(boolean autosave) {
+    public void save(SaveMode saveMode) {
+        boolean autosave = saveMode.isAutoSave();
+
         //Save properties
         TrainProperties.save(autosave);
 
@@ -1128,9 +1185,7 @@ public class TrainCarts extends PluginBase {
         routeManager.save(autosave);
 
         // Save train information
-        if (!autosave) {
-            OfflineGroupManager.save(getDataFolder() + File.separator + "trains.groupdata");
-        }
+        offlineGroupManager.save(saveMode);
     }
 
     private void enableOfflineSignHandlers() {
@@ -1204,7 +1259,7 @@ public class TrainCarts extends PluginBase {
 
         @Override
         public void run() {
-            ((TrainCarts) this.getPlugin()).save(true);
+            ((TrainCarts) this.getPlugin()).save(SaveMode.AUTOSAVE);
         }
     }
 
@@ -1313,9 +1368,25 @@ public class TrainCarts extends PluginBase {
     }
 
     /**
+     * Mode traincarts can save in
+     */
+    public enum SaveMode {
+        /** Save that runs periodically in the background. Only saves deltas */
+        AUTOSAVE,
+        /** Forceful save-all requested using a command */
+        COMMAND,
+        /** Save that occurs on shutdown */
+        SHUTDOWN;
+
+        public boolean isAutoSave() {
+            return this == AUTOSAVE;
+        }
+    }
+
+    /**
      * Designates a Class to be making a TrainCarts plugin instance accessible
      */
-    public static interface Provider {
+    public interface Provider {
 
         /**
          * Gets the TrainCarts main plugin instance. From here all of TrainCarts' API

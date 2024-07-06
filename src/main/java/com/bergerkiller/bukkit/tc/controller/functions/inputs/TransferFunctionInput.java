@@ -1,14 +1,15 @@
 package com.bergerkiller.bukkit.tc.controller.functions.inputs;
 
 import com.bergerkiller.bukkit.common.math.Matrix4x4;
+import com.bergerkiller.bukkit.tc.attachments.control.CartAttachmentSequencer;
 import com.bergerkiller.bukkit.tc.attachments.ui.MapWidgetSelectionBox;
-import com.bergerkiller.bukkit.tc.attachments.ui.functions.MapWidgetTransferFunctionDialog;
 import com.bergerkiller.bukkit.tc.controller.functions.TransferFunction;
 import com.bergerkiller.bukkit.tc.controller.functions.TransferFunctionHost;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 
 /**
  * Reads an input from an external source. Must be further implemented based on what
@@ -54,9 +55,11 @@ public abstract class TransferFunctionInput implements TransferFunction {
     }
 
     @Override
-    public boolean isBooleanOutput() {
-        return source.isBool();
+    public final boolean isBooleanOutput(BooleanSupplier isBooleanInput) {
+        return isBooleanOutput();
     }
+
+    public abstract boolean isBooleanOutput();
 
     @Override
     public final TransferFunctionInput clone() {
@@ -84,7 +87,7 @@ public abstract class TransferFunctionInput implements TransferFunction {
                 serializers.clear();
                 loading = true;
                 for (TransferFunction.Serializer<?> serializer : dialog.getHost().getRegistry().all()) {
-                    if (serializer.isListed() && serializer.isInput()) {
+                    if (serializer.isListed(dialog.getHost()) && serializer.isInput()) {
                         serializers.add(serializer);
                         addItem(serializer.title());
                         if (serializer == TransferFunctionInput.this.getSerializer()) {
@@ -119,11 +122,6 @@ public abstract class TransferFunctionInput implements TransferFunction {
         /** Temporary value used until a proper source is set for an input */
         public static final ReferencedSource NONE = new ReferencedSource() {
             @Override
-            public boolean isBool() {
-                return false;
-            }
-
-            @Override
             public boolean equals(Object o) {
                 return this == o;
             }
@@ -144,15 +142,6 @@ public abstract class TransferFunctionInput implements TransferFunction {
         public double value() {
             return value;
         }
-
-        /**
-         * Gets whether this input is a boolean input. A boolean input returns 1.0 for true and
-         * 0.0 for false. For conditional transfer functions this method signals whether to show
-         * the comparator controls.
-         *
-         * @return True if this input is a boolean input, False if not
-         */
-        public abstract boolean isBool();
 
         /**
          * Adds a new recipient for this input
@@ -190,6 +179,18 @@ public abstract class TransferFunctionInput implements TransferFunction {
          * Called every tick
          */
         public void onTick() {
+        }
+
+        /**
+         * Whether {@link #onTick()} is called (asynchronously) before the effect sequences are
+         * updated in the {@link CartAttachmentSequencer}. Only relevant for referenced sources
+         * that read from the sequencer.
+         *
+         * @return True if {@link #onTick()} is called before the effects are updated.
+         *         False if {@link #onTick()} is called on the main thread. (default)
+         */
+        public boolean isTickedDuringPlay() {
+            return false;
         }
 
         /**

@@ -13,6 +13,7 @@ import com.bergerkiller.bukkit.common.utils.LogicUtil;
 import com.bergerkiller.bukkit.common.utils.MathUtil;
 import com.bergerkiller.bukkit.common.wrappers.LongHashSet;
 import com.bergerkiller.bukkit.common.wrappers.LongHashSet.LongIterator;
+import com.bergerkiller.bukkit.tc.controller.components.SignTracker;
 import com.bergerkiller.bukkit.tc.exception.GroupUnloadedException;
 import com.bergerkiller.bukkit.tc.exception.MemberMissingException;
 import com.bergerkiller.bukkit.tc.TCConfig;
@@ -41,9 +42,12 @@ import com.bergerkiller.bukkit.tc.properties.TrainProperties;
 import com.bergerkiller.bukkit.tc.properties.TrainPropertiesStore;
 import com.bergerkiller.bukkit.tc.properties.standard.StandardProperties;
 import com.bergerkiller.bukkit.tc.properties.standard.type.CartLockOrientation;
+import com.bergerkiller.bukkit.tc.properties.standard.type.ChunkLoadOptions;
 import com.bergerkiller.bukkit.tc.properties.standard.type.SlowdownMode;
 import com.bergerkiller.bukkit.tc.rails.RailLookup;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroupManager;
+import com.bergerkiller.bukkit.tc.offline.train.OfflineGroup;
+import com.bergerkiller.bukkit.tc.offline.train.OfflineGroupManager;
+import com.bergerkiller.bukkit.tc.signactions.mutex.MutexZoneCache;
 import com.bergerkiller.bukkit.tc.utils.ChunkArea;
 import com.bergerkiller.bukkit.tc.utils.TrackWalkingPoint;
 import com.bergerkiller.generated.net.minecraft.world.level.chunk.ChunkHandle;
@@ -569,7 +573,7 @@ public class MinecartGroup extends MinecartGroupStore implements IPropertiesHold
     @Override
     public void clear() {
         // Stop tracking
-        unregisterFromServer();
+        unregisterFromServer(false);
 
         final TrainProperties properties = this.getProperties();
         for (MinecartMember<?> mm : this.toArray()) {
@@ -643,11 +647,16 @@ public class MinecartGroup extends MinecartGroupStore implements IPropertiesHold
             // Event
             GroupUnloadEvent.call(this);
 
+            // Save current state to an offline representation
+            OfflineGroup offlineGroup = OfflineGroupManager.saveGroup(this);
+
             // Stop tracking
-            unregisterFromServer();
+            unregisterFromServer(true);
 
             // Store the group offline
-            OfflineGroupManager.storeGroup(this);
+            if (offlineGroup != null) {
+                traincarts.getOfflineGroups().storeGroup(offlineGroup);
+            }
 
             // Unload. CancelLocationChange must be false otherwise saving position desync occurs!
             this.stop(false);
@@ -676,16 +685,22 @@ public class MinecartGroup extends MinecartGroupStore implements IPropertiesHold
     /**
      * Un-registers this train from the server. This disables presence in active
      * detector regions and rail lookup cache.
+     *
+     * @param unloaded Whether the train has unloaded (true) or was destroyed (false)
      */
-    private void unregisterFromServer() {
+    private void unregisterFromServer(boolean unloaded) {
         // Unload in detector regions
-        getSignTracker().unload();
+        getSignTracker().unload(unloaded ? SignTracker.ClearMode.UNLOAD
+                                         : SignTracker.ClearMode.LEAVE);
 
         // Remove from member-by-rail cache
         getRailTracker().unload();
 
         // Just for good measure
         getActions().clear();
+
+        // Leave from all mutex zone slots
+        MutexZoneCache.unloadGroupInSlots(this);
 
         // Release chunks previously kept loaded by this train
         this.chunkArea.reset();
@@ -1378,9 +1393,14 @@ public class MinecartGroup extends MinecartGroupStore implements IPropertiesHold
         return new MergedInventory(source);
     }
 
+    @Deprecated
     public void keepChunksLoaded(boolean keepLoaded) {
+        keepChunksLoaded(keepLoaded ? ChunkLoadOptions.Mode.FULL : ChunkLoadOptions.Mode.DISABLED);
+    }
+
+    public void keepChunksLoaded(ChunkLoadOptions.Mode mode) {
         for (ChunkArea.OwnedChunk chunk : this.chunkArea.getAll()) {
-            chunk.keepLoaded(keepLoaded);
+            chunk.keepLoaded(mode);
         }
     }
 
@@ -1632,22 +1652,28 @@ public class MinecartGroup extends MinecartGroupStore implements IPropertiesHold
      * Refreshes the chunks this train is occupying. When the train keeps chunks loaded,
      * makes sure to load the new chunks and allow old chunks to unload again.
      * 
-     * @param keepChunksLoaded Whether to keep chunks loaded, or track train unloading
+     * @param keepChunksLoaded Whether to keep chunks loaded, or track train unloading (DISABLED mode)
      * @param isRemoving When true, the train is in process of being removed, and no logic
      *                   besides refreshing the chunk area should be performed.
      */
     private void updateChunkInformation(boolean keepChunksLoaded, boolean isRemoving) {
         /* Timings: updateChunkInformation  (Train Physics) */
         {
+            // If kept loaded, use the chunk loader radius limited by the globally configured limit (abuse!)
+            // If not kept loaded, default to unloading the train when one of the 5x5 chunk area the carts
+            // occupy unloads.
+            ChunkLoadOptions options = keepChunksLoaded ? getProperties().getChunkLoadOptions() : ChunkLoadOptions.DEFAULT;
+            int radius = keepChunksLoaded ? Math.min(TCConfig.maxKeepChunksLoadedRadius, options.radius()) : ChunkArea.CHUNK_RANGE;
+
             // Refresh the chunk area tracker using this information
-            this.chunkArea.refresh(this.getWorld(), this.loadChunksBuffer());
+            this.chunkArea.refresh(this.getWorld(), radius, this.loadChunksBuffer());
             this.chunkAreaValid = true;
 
             // Keep-chunks-loaded or automatic unloading when moving into unloaded chunks
             if (keepChunksLoaded) {
                 // Load chunks we entered for asynchronous loading
                 for (ChunkArea.OwnedChunk chunk : this.chunkArea.getAdded()) {
-                    chunk.keepLoaded(true);
+                    chunk.keepLoaded(options.mode());
                 }
 
                 // Load chunks closeby right away and guarantee they are loaded at all times

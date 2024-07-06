@@ -1,5 +1,8 @@
 package com.bergerkiller.bukkit.tc.signactions.mutex;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -8,11 +11,16 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.UnaryOperator;
 
 import com.bergerkiller.bukkit.common.utils.CommonUtil;
+import com.bergerkiller.bukkit.tc.TrainCarts;
+import com.bergerkiller.bukkit.tc.Util;
 import com.bergerkiller.bukkit.tc.controller.MinecartGroup;
+import com.bergerkiller.bukkit.tc.properties.TrainProperties;
+import com.bergerkiller.bukkit.tc.properties.TrainPropertiesStore;
 import com.bergerkiller.bukkit.tc.rails.RailLookup;
 import org.bukkit.World;
 
@@ -62,6 +70,10 @@ public class MutexZoneCacheWorld {
             }
         }
         return null;
+    }
+
+    public MutexZone findBySign(IntVector3 signPosition, boolean signFront) {
+        return bySignPosition.get(new SignSidePositionKey(signPosition, signFront));
     }
 
     /**
@@ -204,14 +216,16 @@ public class MutexZoneCacheWorld {
             UnaryOperator<MutexZonePath.OptionsBuilder> optionsBuilder
     ) {
         // Find existing
-        MutexZonePath path = byPathingKey.get(new PathingSignKey(sign, group));
+        TrainProperties trainProperties = group.getProperties();
+        MutexZonePath path = byPathingKey.get(PathingSignKey.of(sign.getUniqueKey(), trainProperties));
         if (path != null) {
             return path;
         }
 
         // Create new
-        path = new MutexZonePath(sign, group, initialBlock,
+        path = new MutexZonePath(group.getTrainCarts(), sign, trainProperties,
                 optionsBuilder.apply(MutexZonePath.createOptions()));
+        path.addBlock(initialBlock);
         add(path);
         return path;
     }
@@ -223,6 +237,20 @@ public class MutexZoneCacheWorld {
     }
 
     public void onTick() {
+        updatePathingMutexes();
+
+        // Track all mutex zones that have been newly added since previous tick
+        // Trains look at these every tick to see if they are inside them, since
+        // normally they only look from the head of the train onwards.
+        if (newZonesLive.isEmpty()) {
+            newZones = Collections.emptyList();
+        } else {
+            newZones = new ArrayList<>(newZonesLive);
+            newZonesLive.clear();
+        }
+    }
+
+    private void updatePathingMutexes() {
         if (byPathingKey.isEmpty()) {
             return;
         }
@@ -235,16 +263,6 @@ public class MutexZoneCacheWorld {
                 iter.remove();
                 remove(zonePath);
             }
-        }
-
-        // Track all mutex zones that have been newly added since previous tick
-        // Trains look at these every tick to see if they are inside them, since
-        // normally they only look from the head of the train onwards.
-        if (newZonesLive.isEmpty()) {
-            newZones = Collections.emptyList();
-        } else {
-            newZones = new ArrayList<>(newZonesLive);
-            newZonesLive.clear();
         }
     }
 
@@ -440,13 +458,42 @@ public class MutexZoneCacheWorld {
         }
     }
 
-    protected static class PathingSignKey {
+    protected static final class PathingSignKey {
         public final Object uniqueKey;
-        public final MinecartGroup group;
+        public final TrainProperties trainProperties;
 
-        public PathingSignKey(RailLookup.TrackedSign sign, MinecartGroup group) {
-            this.uniqueKey = sign.getUniqueKey();
-            this.group = group;
+        private PathingSignKey(Object signUniqueKey, TrainProperties trainProperties) {
+            this.uniqueKey = signUniqueKey;
+            this.trainProperties = trainProperties;
+        }
+
+        public static PathingSignKey of(Object signUniqueKey, TrainProperties trainProperties) {
+            return new PathingSignKey(signUniqueKey, trainProperties);
+        }
+
+        public static Optional<PathingSignKey> readFrom(TrainCarts plugin, DataInputStream stream) throws IOException {
+            Object signUniqueKey = plugin.getTrackedSignLookup().deserializeUniqueKey(Util.readByteArray(stream));
+            TrainProperties trainProperties = TrainPropertiesStore.get(stream.readUTF());
+            if (signUniqueKey == null || trainProperties == null) {
+                return Optional.empty();
+            } else {
+                return Optional.of(of(signUniqueKey, trainProperties));
+            }
+        }
+
+        public boolean writeTo(TrainCarts plugin, DataOutputStream stream) throws IOException {
+            if (trainProperties.isRemoved()) {
+                return false;
+            }
+
+            byte[] data = plugin.getTrackedSignLookup().serializeUniqueKey(uniqueKey);
+            if (data == null) {
+                return false;
+            }
+
+            Util.writeByteArray(stream, data);
+            stream.writeUTF(trainProperties.getTrainName());
+            return true;
         }
 
         @Override
@@ -457,7 +504,7 @@ public class MutexZoneCacheWorld {
         @Override
         public boolean equals(Object o) {
             PathingSignKey other = (PathingSignKey) o;
-            return uniqueKey.equals(other.uniqueKey) && group == other.group;
+            return uniqueKey.equals(other.uniqueKey) && trainProperties == other.trainProperties;
         }
     }
 

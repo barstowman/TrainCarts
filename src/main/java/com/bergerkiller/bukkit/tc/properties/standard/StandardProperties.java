@@ -26,7 +26,7 @@ public class StandardProperties {
     public static final TagSetProperty TAGS = new TagSetProperty();
     public static final ExitOffsetProperty EXIT_OFFSET = new ExitOffsetProperty();
     public static final TicketSetProperty TICKETS = new TicketSetProperty();
-    public static final KeepChunksLoadedProperty KEEP_CHUNKS_LOADED = new KeepChunksLoadedProperty();
+    public static final ChunkLoadOptionsProperty CHUNK_LOAD_OPTIONS = new ChunkLoadOptionsProperty();
     public static final BankingOptionsProperty BANKING = new BankingOptionsProperty();
     public static final SlowdownProperty SLOWDOWN = new SlowdownProperty();
     public static final CollisionProperty COLLISION = new CollisionProperty();
@@ -159,6 +159,11 @@ public class StandardProperties {
         @Override
         public Boolean getDefault() {
             return Boolean.FALSE;
+        }
+
+        @Override
+        public boolean isListed() {
+            return false; // I see no use listing it
         }
 
         @Override

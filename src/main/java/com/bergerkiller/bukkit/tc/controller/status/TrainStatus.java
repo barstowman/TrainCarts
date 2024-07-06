@@ -2,6 +2,7 @@ package com.bergerkiller.bukkit.tc.controller.status;
 
 import java.util.List;
 
+import com.bergerkiller.bukkit.tc.signactions.mutex.railslot.MutexRailSlot;
 import org.bukkit.ChatColor;
 import org.bukkit.block.Block;
 
@@ -152,10 +153,21 @@ public interface TrainStatus {
     /**
      * Waiting for the pathfinding module to finish calculation the new routes
      */
-    public static final class WaitingForRouting implements Waiting {
+    enum WaitingForRouting implements Waiting {
+        CALCULATING("Waiting for path finding router to finish"),
+        NO_ROUTE("Waiting infinitely because no route to destination could be found, and there is no fallback direction"),
+        NO_DESTINATION("Waiting infinitely because no destination is set, and there is no fallback direction"),
+        AT_DESTINATION("Waiting infinitely because current destination is this station");
+
+        private final String message;
+
+        WaitingForRouting(String message) {
+            this.message = message;
+        }
+
         @Override
         public String getMessage() {
-            return ChatColor.RED + "Waiting for path finding router to finish";
+            return ChatColor.RED + this.message;
         }
     }
 
@@ -430,9 +442,9 @@ public interface TrainStatus {
     public static final class EnteredMutexZone implements TrainStatus {
         private final MutexZoneSlot slot;
         private final List<MutexZone> zones;
-        private final MutexZoneSlot.EnteredGroup group;
+        private final MutexZoneSlot.LoadedEnteredGroup group;
 
-        public EnteredMutexZone(MutexZoneSlot slot, List<MutexZone> zones, MutexZoneSlot.EnteredGroup group) {
+        public EnteredMutexZone(MutexZoneSlot slot, List<MutexZone> zones, MutexZoneSlot.LoadedEnteredGroup group) {
             this.slot = slot;
             this.zones = zones;
             this.group = group;
@@ -505,19 +517,19 @@ public interface TrainStatus {
 
                 if (group.active) {
                     str.append("Locked Rail Blocks:\r\n");
-                    for (MutexZoneSlot.RailSlot slot : group.getLastPath()) {
+                    for (MutexRailSlot slot : group.getLastPath()) {
                         str.append("  ");
                         slot.debugPrint(str);
                         str.append("\r\n");
                     }
                 } else {
-                    List<MutexZoneSlot.RailSlot> rails = group.getLastPath();
+                    List<MutexRailSlot> rails = group.getLastPath();
                     if (rails.isEmpty()) {
                         str.append("Waiting for Rail: Unknown\r\n");
                     } else {
                         str.append("Path taken through Mutex:\r\n");
                         for (int i = 0; i < rails.size() - 1; i++) {
-                            MutexZoneSlot.RailSlot slot = rails.get(i);
+                            MutexRailSlot slot = rails.get(i);
                             str.append("  ");
                             slot.debugPrint(str);
                             str.append("\r\n");

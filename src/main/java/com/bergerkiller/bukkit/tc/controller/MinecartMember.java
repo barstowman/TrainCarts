@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.bergerkiller.bukkit.common.controller.EntityPositionApplier;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -91,7 +92,6 @@ import com.bergerkiller.bukkit.tc.rails.logic.RailLogicVertical;
 import com.bergerkiller.bukkit.tc.rails.type.RailType;
 import com.bergerkiller.bukkit.tc.rails.type.RailTypeActivator;
 import com.bergerkiller.bukkit.tc.signactions.SignActionType;
-import com.bergerkiller.bukkit.tc.storage.OfflineGroupManager;
 import com.bergerkiller.bukkit.tc.utils.ChunkArea;
 import com.bergerkiller.bukkit.tc.utils.Effect;
 import com.bergerkiller.bukkit.tc.utils.TrackIterator;
@@ -1488,13 +1488,17 @@ public abstract class MinecartMember<T extends CommonMinecart<?>> extends Entity
             return false;
         }
 
+        CollisionMode mode = this.getGroup().getProperties().getCollisionMode(e);
+        if (mode == CollisionMode.CANCEL) {
+            return false;
+        }
+
         // Verify that the entity is actually inside the bounding box of this entity
         // This involves a complicated rotated box intersection test
         if (!this.isModelIntersectingWith(e)) {
             return false;
         }
 
-        CollisionMode mode = this.getGroup().getProperties().getCollisionMode(e);
         if (!mode.execute(this, e)) {
             return false;
         }
@@ -1625,6 +1629,18 @@ public abstract class MinecartMember<T extends CommonMinecart<?>> extends Entity
         return true;
     }
 
+    @Override
+    public void onPositionPassenger(Entity passenger, EntityPositionApplier applier) {
+        // Find seat. If for some reason one isn't available, use vanilla fallback.
+        CartAttachmentSeat seat = attachmentController.findSeat(passenger);
+        if (seat == null) {
+            super.onPositionPassenger(passenger, applier);
+            return;
+        }
+
+        applier.setPosition(seat.getTransform().toVector());
+    }
+
     /**
      * Checks whether the bounding box of another Entity is intersecting with this
      * minecart's 3d model bounding box
@@ -1636,17 +1652,21 @@ public abstract class MinecartMember<T extends CommonMinecart<?>> extends Entity
         MinecartMember<?> other = MinecartMemberStore.getFromEntity(entity);
         if (other != null) {
             // Have to do both ways around!
-            return this.isModelIntersectingWith_impl(entity)
-                    && other.isModelIntersectingWith_impl(this.entity.getEntity());
+            return this.isModelIntersectingWith_impl(other.entity.getWrappedHandle())
+                    && other.isModelIntersectingWith_impl(this.entity.getWrappedHandle());
         } else {
             return this.isModelIntersectingWith_impl(entity);
         }
     }
 
     private final boolean isModelIntersectingWith_impl(Entity entity) {
+        return isModelIntersectingWith_impl(EntityHandle.fromBukkit(entity));
+    }
+
+    private final boolean isModelIntersectingWith_impl(EntityHandle entityHandle) {
         // We lack a proper bounding box collision test
         // Instead we do a poor man's method of probing various points on the entity
-        AxisAlignedBBHandle aabb = EntityHandle.fromBukkit(entity).getBoundingBox();
+        AxisAlignedBBHandle aabb = entityHandle.getBoundingBox();
         double[] xval = { aabb.getMinX(), 0.5 * (aabb.getMinX() + aabb.getMaxX()), aabb.getMaxX() };
         double[] yval = { aabb.getMinY(), 0.5 * (aabb.getMinY() + aabb.getMaxY()), aabb.getMaxY() };
         double[] zval = { aabb.getMinZ(), 0.5 * (aabb.getMinZ() + aabb.getMaxZ()), aabb.getMaxZ() };
@@ -1794,6 +1814,17 @@ public abstract class MinecartMember<T extends CommonMinecart<?>> extends Entity
 
     /**
      * Ejects the passenger of this Minecart and teleports him to the offset and
+     * rotation specified. The original yaw and pitch of the entity is maintained.
+     *
+     * @param offset to teleport to
+     */
+    public void eject(Vector offset) {
+        eject(new Location(entity.getWorld(), entity.loc.getX() + offset.getX(), entity.loc.getY() + offset.getY(),
+                entity.loc.getZ() + offset.getZ(), 0.0f, 0.0f), true);
+    }
+
+    /**
+     * Ejects the passenger of this Minecart and teleports him to the offset and
      * rotation specified
      *
      * @param offset to teleport to
@@ -1812,10 +1843,34 @@ public abstract class MinecartMember<T extends CommonMinecart<?>> extends Entity
      * @param to location to eject/teleport to
      */
     public void eject(final Location to) {
+        eject(to, false);
+    }
+
+    /**
+     * Ejects the passenger of this Minecart and teleports him to the location
+     * specified
+     *
+     * @param to location to eject/teleport to
+     * @param retainEntityRotation Whether to retain the original yaw and pitch of the
+     *                             rotation (camera view) of the entity. When false, does
+     *                             not change where players look.
+     */
+    public void eject(final Location to, boolean retainEntityRotation) {
         if (entity.hasPassenger()) {
-            List<Entity> oldPassengers = new ArrayList<>(entity.getPassengers());
+            final List<Entity> oldPassengers = new ArrayList<>(entity.getPassengers());
             TCSeatChangeListener.exemptFromEjectOffset.addAll(oldPassengers);
             this.eject();
+            if (!oldPassengers.isEmpty()) {
+                CommonUtil.nextTick(() -> {
+                    for (Entity oldPassenger : oldPassengers) {
+                        if (retainEntityRotation) {
+                            Util.teleportPosition(oldPassenger, to);
+                        } else {
+                            EntityUtil.teleport(oldPassenger, to);
+                        }
+                    }
+                });
+            }
             for (Entity oldPassenger : oldPassengers) {
                 EntityUtil.teleportNextTick(oldPassenger, to);
             }
@@ -1919,7 +1974,8 @@ public abstract class MinecartMember<T extends CommonMinecart<?>> extends Entity
     }
 
     protected void updateUnloaded() {
-        setUnloaded((entity == null) || entity.isRemoved() || OfflineGroupManager.containsMinecart(entity.getUniqueId()));
+        setUnloaded((entity == null) || entity.isRemoved() ||
+                traincarts.getOfflineGroups().containsMinecart(entity.getUniqueId()));
         if (!unloaded && (this.group == null || this.group.canUnload())) {
             // Check a 5x5 chunk area around this Minecart to see if it is loaded
             World world = entity.getWorld();
